@@ -5,9 +5,16 @@ description = "标准至控制计划检查项提取系统 (Standard to Control P
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "fastapi>=0.162.0",
+    "httpx>=0.28.1",
     "openpyxl>=3.1.5",
     "pydantic>=2.14.2",
+    "pypdf>=6.21.4",
+    "python-docx>=1.2.0",
+    "python-dotenv>=1.2.4",
+    "python-multipart>=0.0.33",
     "pyyaml>=6.0.3",
+    "uvicorn[standard]>=0.54.0",
 ]
 
 [dependency-groups]

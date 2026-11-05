@@ -1,0 +1,813 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>CP-Extractor | 标准→控制计划检查项提取系统</title>
+  <style>
+    :root {
+      --bg: #f4f6f9;
+      --card: #ffffff;
+      --primary: #1a4b8c;
+      --primary-hover: #133869;
+      --accent: #0ea5e9;
+      --success: #16a34a;
+      --warning: #d97706;
+      --warning-bg: #fffbeb;
+      --danger: #dc2626;
+      --text: #1e293b;
+      --muted: #64748b;
+      --border: #e2e8f0;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      font-size: 14px;
+      line-height: 1.5;
+    }
+    header {
+      background: linear-gradient(90deg, #0f294a 0%, #1a4b8c 100%);
+      color: #fff;
+      padding: 14px 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.12);
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .brand h1 { font-size: 18px; font-weight: 600; letter-spacing: 0.3px; }
+    .brand .tag {
+      background: rgba(255,255,255,0.16);
+      font-size: 12px;
+      padding: 2px 8px;
+      border-radius: 4px;
+    }
+    .top-controls {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .top-controls select, .btn-top {
+      background: rgba(255,255,255,0.12);
+      color: #fff;
+      border: 1px solid rgba(255,255,255,0.28);
+      padding: 6px 12px;
+      border-radius: 6px;
+      font-size: 13px;
+      cursor: pointer;
+    }
+    .top-controls select option { color: #1e293b; background: #fff; }
+    .btn-top:hover { background: rgba(255,255,255,0.22); }
+    .status-dot {
+      display: inline-block;
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      margin-right: 5px;
+      background: #fbbf24;
+    }
+    .status-dot.ready { background: #4ade80; }
+
+    .workspace {
+      display: grid;
+      grid-template-columns: 440px 1fr;
+      gap: 16px;
+      padding: 16px 20px;
+      height: calc(100vh - 60px);
+    }
+    .panel {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+    }
+    .panel-header {
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      background: #f8fafc;
+      font-weight: 600;
+    }
+    .panel-body {
+      padding: 14px 16px;
+      flex: 1;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .sample-bar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+    .chip-btn {
+      background: #f1f5f9;
+      border: 1px solid #cbd5e1;
+      color: #334155;
+      padding: 5px 10px;
+      border-radius: 6px;
+      font-size: 12px;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .chip-btn:hover, .chip-btn.active {
+      background: #e0f2fe;
+      border-color: #0284c7;
+      color: #0369a1;
+      font-weight: 600;
+    }
+
+    .form-row {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+    .form-row label {
+      font-size: 12px;
+      color: var(--muted);
+      white-space: nowrap;
+    }
+    .form-control {
+      width: 100%;
+      padding: 6px 10px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      font-size: 13px;
+    }
+
+    .tabs {
+      display: flex;
+      border-bottom: 1px solid var(--border);
+      gap: 4px;
+    }
+    .tab-btn {
+      padding: 7px 12px;
+      border: none;
+      background: transparent;
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+      border-bottom: 2px solid transparent;
+    }
+    .tab-btn.active {
+      color: var(--primary);
+      border-bottom-color: var(--primary);
+      font-weight: 600;
+    }
+
+    textarea.editor {
+      flex: 1;
+      width: 100%;
+      min-height: 300px;
+      resize: none;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 10px;
+      font-family: "SFMono-Regular", Consolas, Menlo, monospace;
+      font-size: 12.5px;
+      line-height: 1.55;
+      background: #fcfcfd;
+    }
+    .btn-primary {
+      background: var(--primary);
+      color: #fff;
+      border: none;
+      padding: 10px 16px;
+      border-radius: 8px;
+      font-weight: 600;
+      font-size: 14px;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+    .btn-primary:hover { background: var(--primary-hover); }
+    .btn-primary:disabled { opacity: 0.6; cursor: not-allowed; }
+
+    /* Right Panel KPIs */
+    .kpi-grid {
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      gap: 10px;
+    }
+    .kpi-card {
+      background: #f8fafc;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 10px 12px;
+    }
+    .kpi-card .label { font-size: 12px; color: var(--muted); }
+    .kpi-card .val { font-size: 18px; font-weight: 700; margin-top: 2px; color: var(--text); }
+    .kpi-card.warn { background: var(--warning-bg); border-color: #fde68a; }
+    .kpi-card.warn .val { color: var(--warning); }
+
+    /* Table */
+    .table-wrap {
+      flex: 1;
+      overflow: auto;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 12.5px;
+    }
+    th {
+      position: sticky;
+      top: 0;
+      background: #f1f5f9;
+      color: #334155;
+      text-align: left;
+      padding: 9px 10px;
+      border-bottom: 1px solid var(--border);
+      font-weight: 600;
+      white-space: nowrap;
+    }
+    td {
+      padding: 8px 10px;
+      border-bottom: 1px solid var(--border);
+      vertical-align: top;
+    }
+    tr:hover td { background: #f8fafc; }
+
+    .badge {
+      display: inline-block;
+      padding: 2px 7px;
+      border-radius: 4px;
+      font-size: 11px;
+      font-weight: 600;
+    }
+    .badge-high { background: #dcfce7; color: #15803d; }
+    .badge-med { background: #e0f2fe; color: #0369a1; }
+    .badge-low { background: #fef3c7; color: #b45309; }
+    .badge-cat { background: #eef2ff; color: #4338ca; }
+
+    .quote-box {
+      font-size: 11.5px;
+      color: #475569;
+      background: #f8fafc;
+      border-left: 3px solid #94a3b8;
+      padding: 4px 8px;
+      border-radius: 2px;
+    }
+
+    .review-card {
+      background: var(--warning-bg);
+      border: 1px solid #fcd34d;
+      border-radius: 8px;
+      padding: 12px 14px;
+      margin-bottom: 10px;
+    }
+    .review-card h4 {
+      color: #92400e;
+      margin-bottom: 8px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .review-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      margin-bottom: 10px;
+    }
+    .btn-sm {
+      padding: 5px 12px;
+      border-radius: 6px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      border: none;
+    }
+    .btn-approve { background: var(--success); color: #fff; }
+    .btn-reject { background: #fee2e2; color: var(--danger); }
+    .btn-dl {
+      background: #0f766e;
+      color: #fff;
+      text-decoration: none;
+      padding: 6px 12px;
+      border-radius: 6px;
+      font-size: 12.5px;
+      font-weight: 600;
+    }
+    .btn-dl.secondary { background: #475569; }
+
+    /* Modal */
+    .modal-backdrop {
+      position: fixed;
+      inset: 0;
+      background: rgba(15, 23, 42, 0.55);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 100;
+    }
+    .modal-backdrop.open { display: flex; }
+    .modal {
+      background: #fff;
+      width: 460px;
+      border-radius: 10px;
+      padding: 20px;
+      box-shadow: 0 10px 25px rgba(0,0,0,0.2);
+    }
+    .modal h3 { margin-bottom: 12px; font-size: 16px; }
+    .modal .field { margin-bottom: 12px; }
+    .modal .field label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 4px; }
+  </style>
+</head>
+<body>
+
+<header>
+  <div class="brand">
+    <h1>CP-Extractor 标准→控制计划检查项提取系统</h1>
+    <span class="tag">IATF 16949 / APQP</span>
+  </div>
+  <div class="top-controls">
+    <label style="font-size:12px;">提取引擎：</label>
+    <select id="engineMode">
+      <option value="auto">智能切换 (已配Key用DeepSeek / 否则内置基准)</option>
+      <option value="deepseek">强制使用 DeepSeek 大模型 API</option>
+      <option value="rule">内置结构化基准引擎 (离线免Key极速)</option>
+    </select>
+    <button class="btn-top" onclick="openModal()">
+      <span id="dsStatusDot" class="status-dot"></span>DeepSeek API 配置
+    </button>
+    <a href="/docs" target="_blank" class="btn-top" style="text-decoration:none;">Swagger API 文档</a>
+  </div>
+</header>
+
+<div class="workspace">
+  <!-- 左侧：输入与提示词组装 -->
+  <div class="panel">
+    <div class="panel-header">
+      <span>1. 标准文档输入与插件路由</span>
+      <label class="chip-btn" style="margin:0;">
+        📂 上传文档 (.md/.pdf/.docx)
+        <input type="file" id="fileUpload" accept=".md,.txt,.pdf,.docx" style="display:none" onchange="handleUpload(event)" />
+      </label>
+    </div>
+    <div class="panel-body">
+      <div>
+        <div style="font-size:12px; color:var(--muted); margin-bottom:6px;">一键加载四类基准汽车标准样本：</div>
+        <div class="sample-bar" id="sampleBar"></div>
+      </div>
+
+      <div class="form-row">
+        <label>文件名称：</label>
+        <input type="text" id="fileNameInput" class="form-control" value="sample_tolerance_iso2768.md" />
+      </div>
+
+      <div class="form-row">
+        <label>标准类别：</label>
+        <select id="categorySelect" class="form-control" onchange="refreshPromptPreview()">
+          <option value="">🤖 自动识别 (按标准文本特征路由插件)</option>
+          <option value="tolerance">📐 公差/尺寸标准插件 (tolerance)</option>
+          <option value="material">🧪 材料标准插件 (material)</option>
+          <option value="process">🔥 工艺标准插件 (process)</option>
+          <option value="appearance_performance">✨ 外观/性能标准插件 (appearance_performance)</option>
+        </select>
+      </div>
+
+      <div class="tabs">
+        <button class="tab-btn active" id="leftTabSrc" onclick="switchLeftTab('src')">📄 标准原文编辑</button>
+        <button class="tab-btn" id="leftTabPrompt" onclick="switchLeftTab('prompt')">🧩 组装提示词预览 (Base+Plugin)</button>
+      </div>
+
+      <textarea id="sourceEditor" class="editor" placeholder="在此粘贴或上传汽车技术标准文本..."></textarea>
+      <textarea id="promptPreview" class="editor" style="display:none; background:#f8fafc;" readonly></textarea>
+
+      <button class="btn-primary" id="extractBtn" onclick="runExtraction()">
+        🚀 执行检查项提取与质量门禁校验
+      </button>
+    </div>
+  </div>
+
+  <!-- 右侧：结果、人工门禁与导出 -->
+  <div class="panel">
+    <div class="panel-header">
+      <div>
+        <span>2. 控制计划检查项与质量门禁工作台</span>
+        <span id="engineUsedBadge" class="badge badge-med" style="margin-left:8px; display:none;"></span>
+      </div>
+      <div style="display:flex; gap:8px;" id="exportBar"></div>
+    </div>
+    <div class="panel-body">
+      <div class="kpi-grid">
+        <div class="kpi-card">
+          <div class="label">识别标准类别</div>
+          <div class="val" id="kpiCategory" style="font-size:15px;">-</div>
+        </div>
+        <div class="kpi-card">
+          <div class="label">扫描条款总数</div>
+          <div class="val" id="kpiClauses">0</div>
+        </div>
+        <div class="kpi-card">
+          <div class="label">正式准入检查项</div>
+          <div class="val" id="kpiValid" style="color:var(--success);">0</div>
+        </div>
+        <div class="kpi-card warn">
+          <div class="label">门禁拦截待复核</div>
+          <div class="val" id="kpiPending">0</div>
+        </div>
+        <div class="kpi-card">
+          <div class="label">置信度 (高/中/低)</div>
+          <div class="val" id="kpiConf" style="font-size:15px;">0 / 0 / 0</div>
+        </div>
+      </div>
+
+      <div class="tabs">
+        <button class="tab-btn active" id="rightTabValid" onclick="switchRightTab('valid')">
+          ✅ 正式控制计划清单 (<span id="tabCountValid">0</span>)
+        </button>
+        <button class="tab-btn" id="rightTabPending" onclick="switchRightTab('pending')">
+          ⚠️ 人工确认门禁清单 (<span id="tabCountPending">0</span>)
+        </button>
+        <button class="tab-btn" id="rightTabReport" onclick="switchRightTab('report')">
+          🛡️ 后处理校验报告 & JSON
+        </button>
+      </div>
+
+      <!-- Tab 1: 正式检查项表格 -->
+      <div class="table-wrap" id="viewValid">
+        <table>
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>特性名称</th>
+              <th>类别</th>
+              <th>规范 / 公差</th>
+              <th>检查 / 试验方法</th>
+              <th>判定准则</th>
+              <th>条款</th>
+              <th>原文引用摘录 (溯源)</th>
+              <th>置信度</th>
+            </tr>
+          </thead>
+          <tbody id="validTableBody">
+            <tr><td colspan="9" style="text-align:center; padding:40px; color:var(--muted);">点击左侧「执行检查项提取与质量门禁校验」查看结果</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- Tab 2: 人工确认门禁 -->
+      <div class="table-wrap" id="viewPending" style="display:none; padding:12px; border:none;">
+        <div id="pendingContainer"></div>
+      </div>
+
+      <!-- Tab 3: 校验报告 & JSON -->
+      <div class="table-wrap" id="viewReport" style="display:none; padding:12px;">
+        <div id="reportSummary" style="margin-bottom:12px;"></div>
+        <pre id="jsonOutput" style="font-size:12px; background:#0f172a; color:#e2e8f0; padding:12px; border-radius:8px; overflow:auto;"></pre>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- DeepSeek 配置弹窗 -->
+<div class="modal-backdrop" id="dsModal">
+  <div class="modal">
+    <h3>⚡ DeepSeek 大模型 API 配置</h3>
+    <p style="font-size:12px; color:var(--muted); margin-bottom:12px;">
+      支持 DeepSeek 官方 API (<code>https://api.deepseek.com</code>) 或任何兼容 OpenAI 协议的私有化端点。也可在项目根目录 <code>.env</code> 文件中持久化配置。
+    </p>
+    <div class="field">
+      <label>DeepSeek API Key <span id="envKeyHint" style="color:var(--success);"></span></label>
+      <input type="password" id="dsApiKey" class="form-control" placeholder="sk-..." />
+    </div>
+    <div class="field">
+      <label>API Base URL</label>
+      <input type="text" id="dsBaseUrl" class="form-control" value="https://api.deepseek.com" />
+    </div>
+    <div class="field">
+      <label>模型名称 (Model)</label>
+      <select id="dsModel" class="form-control">
+        <option value="deepseek-chat">deepseek-chat (DeepSeek-V3 推荐，支持严格 JSON 模式)</option>
+        <option value="deepseek-reasoner">deepseek-reasoner (DeepSeek-R1 深度推理模型)</option>
+      </select>
+    </div>
+    <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:16px;">
+      <button class="chip-btn" onclick="closeModal()">取消</button>
+      <button class="btn-primary" style="padding:6px 16px;" onclick="saveDsConfig()">保存配置</button>
+    </div>
+  </div>
+</div>
+
+<script>
+  let currentPackage = null;
+  let serverHasEnvKey = false;
+
+  async function initApp() {
+    // 读取本地存储的 DeepSeek 配置
+    document.getElementById('dsApiKey').value = localStorage.getItem('ds_api_key') || '';
+    if (localStorage.getItem('ds_base_url')) {
+      document.getElementById('dsBaseUrl').value = localStorage.getItem('ds_base_url');
+    }
+    if (localStorage.getItem('ds_model')) {
+      document.getElementById('dsModel').value = localStorage.getItem('ds_model');
+    }
+
+    const cfgResp = await fetch('/api/config');
+    const cfg = await cfgResp.json();
+    serverHasEnvKey = cfg.has_env_key;
+    if (serverHasEnvKey) {
+      document.getElementById('envKeyHint').textContent = `(服务端 .env 已配置 ${cfg.masked_env_key})`;
+    }
+    updateDsStatusIndicator();
+
+    // 加载样本按钮
+    const sResp = await fetch('/api/samples');
+    const samples = await sResp.json();
+    const bar = document.getElementById('sampleBar');
+    bar.innerHTML = '';
+    samples.forEach((s, idx) => {
+      const btn = document.createElement('button');
+      btn.className = 'chip-btn' + (idx === 0 ? ' active' : '');
+      btn.textContent = s.badge;
+      btn.title = s.title;
+      btn.onclick = () => loadSample(s.file_name, btn);
+      bar.appendChild(btn);
+    });
+
+    if (samples.length > 0) {
+      await loadSample(samples[0].file_name, bar.firstChild);
+      await runExtraction();
+    }
+  }
+
+  function updateDsStatusIndicator() {
+    const localKey = (document.getElementById('dsApiKey').value || '').trim();
+    const dot = document.getElementById('dsStatusDot');
+    if (localKey || serverHasEnvKey) {
+      dot.classList.add('ready');
+    } else {
+      dot.classList.remove('ready');
+    }
+  }
+
+  async function loadSample(sampleName, btnEl) {
+    document.querySelectorAll('#sampleBar .chip-btn').forEach(b => b.classList.remove('active'));
+    if (btnEl) btnEl.classList.add('active');
+
+    const resp = await fetch(`/api/samples/${sampleName}`);
+    const data = await resp.json();
+    document.getElementById('fileNameInput').value = data.file_name;
+    document.getElementById('sourceEditor').value = data.content;
+    await refreshPromptPreview();
+  }
+
+  async function handleUpload(ev) {
+    const file = ev.target.files[0];
+    if (!file) return;
+    const formData = new FormData();
+    formData.append('file', file);
+    const resp = await fetch('/api/upload', { method: 'POST', body: formData });
+    if (!resp.ok) {
+      const err = await resp.json();
+      alert('文件解析失败: ' + err.detail);
+      return;
+    }
+    const data = await resp.json();
+    document.getElementById('fileNameInput').value = data.file_name;
+    document.getElementById('sourceEditor').value = data.content;
+    await refreshPromptPreview();
+  }
+
+  async function refreshPromptPreview() {
+    const content = document.getElementById('sourceEditor').value;
+    const manual_category = document.getElementById('categorySelect').value || null;
+    if (!content.trim()) return;
+    const resp = await fetch('/api/preview-prompt', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content, manual_category })
+    });
+    if (resp.ok) {
+      const data = await resp.json();
+      document.getElementById('promptPreview').value = data.prompt;
+    }
+  }
+
+  function switchLeftTab(tab) {
+    document.getElementById('leftTabSrc').classList.toggle('active', tab === 'src');
+    document.getElementById('leftTabPrompt').classList.toggle('active', tab === 'prompt');
+    document.getElementById('sourceEditor').style.display = tab === 'src' ? 'block' : 'none';
+    document.getElementById('promptPreview').style.display = tab === 'prompt' ? 'block' : 'none';
+    if (tab === 'prompt') refreshPromptPreview();
+  }
+
+  function switchRightTab(tab) {
+    ['valid', 'pending', 'report'].forEach(t => {
+      document.getElementById('rightTab' + t.charAt(0).toUpperCase() + t.slice(1)).classList.toggle('active', t === tab);
+      document.getElementById('view' + t.charAt(0).toUpperCase() + t.slice(1)).style.display = t === tab ? 'block' : 'none';
+    });
+  }
+
+  async function runExtraction() {
+    const btn = document.getElementById('extractBtn');
+    btn.disabled = true;
+    btn.textContent = '⏳ 正在提取并运行质量门禁校验...';
+
+    try {
+      const payload = {
+        file_name: document.getElementById('fileNameInput').value || 'standard.md',
+        content: document.getElementById('sourceEditor').value,
+        manual_category: document.getElementById('categorySelect').value || null,
+        engine_mode: document.getElementById('engineMode').value,
+        deepseek_api_key: document.getElementById('dsApiKey').value || null,
+        deepseek_base_url: document.getElementById('dsBaseUrl').value || null,
+        deepseek_model: document.getElementById('dsModel').value || null,
+      };
+
+      const resp = await fetch('/api/extract', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+
+      const data = await resp.json();
+      if (!resp.ok) {
+        alert('提取失败: ' + (data.detail || '未知错误'));
+        return;
+      }
+
+      const badge = document.getElementById('engineUsedBadge');
+      badge.style.display = 'inline-block';
+      badge.textContent = '引擎: ' + data.engine_used;
+
+      renderResult(data.package, data.excel_download_url, data.json_download_url);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = '🚀 执行检查项提取与质量门禁校验';
+    }
+  }
+
+  function renderResult(pkg, excelUrl, jsonUrl) {
+    currentPackage = pkg;
+    const cov = pkg.coverage_summary;
+
+    document.getElementById('kpiCategory').textContent = pkg.standard_info.standard_category;
+    document.getElementById('kpiClauses').textContent = cov.total_clauses_scanned;
+    document.getElementById('kpiValid').textContent = pkg.check_items.length;
+    document.getElementById('kpiPending').textContent = pkg.pending_review_items.length;
+    document.getElementById('kpiConf').textContent = `${cov.high_confidence} / ${cov.medium_confidence} / ${cov.low_confidence}`;
+
+    document.getElementById('tabCountValid').textContent = pkg.check_items.length;
+    document.getElementById('tabCountPending').textContent = pkg.pending_review_items.length;
+
+    // 导出按钮栏
+    document.getElementById('exportBar').innerHTML = `
+      <a class="btn-dl" href="${excelUrl}" download>📥 导出控制计划 Excel (.xlsx)</a>
+      <a class="btn-dl secondary" href="${jsonUrl}" download>📥 导出 JSON 包</a>
+    `;
+
+    // 渲染正式检查项表
+    const tbody = document.getElementById('validTableBody');
+    if (pkg.check_items.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="9" style="text-align:center; padding:30px; color:var(--muted);">暂无正式准入检查项</td></tr>';
+    } else {
+      tbody.innerHTML = pkg.check_items.map((item, idx) => `
+        <tr>
+          <td>${idx + 1}</td>
+          <td style="font-weight:600;">${escapeHtml(item.characteristic_name)}</td>
+          <td><span class="badge badge-cat">${escapeHtml(item.characteristic_category)}</span></td>
+          <td>${escapeHtml(item.specification)}</td>
+          <td>${escapeHtml(item.inspection_method)}</td>
+          <td>${escapeHtml(item.acceptance_criteria)}</td>
+          <td style="font-weight:600;">${escapeHtml(item.standard_clause)}</td>
+          <td><div class="quote-box">${escapeHtml(item.source_quote)}</div></td>
+          <td><span class="badge ${item.confidence === '高' ? 'badge-high' : (item.confidence === '中' ? 'badge-med' : 'badge-low')}">${item.confidence}</span></td>
+        </tr>
+      `).join('');
+    }
+
+    // 渲染人工确认门禁清单
+    const pendingBox = document.getElementById('pendingContainer');
+    if (pkg.pending_review_items.length === 0) {
+      pendingBox.innerHTML = '<div style="text-align:center; padding:30px; color:var(--success); font-weight:600;">🎉 所有检查项均已通过门禁，无待人工确认项！</div>';
+    } else {
+      pendingBox.innerHTML = pkg.pending_review_items.map((item, idx) => `
+        <div class="review-card">
+          <h4>
+            <span>⚠️ 待审核项 #${idx + 1}：${escapeHtml(item.characteristic_name)}（条款 ${escapeHtml(item.standard_clause)}）</span>
+            <span class="badge badge-low">置信度：${item.confidence}</span>
+          </h4>
+          <p style="font-size:12px; color:#b45309; margin-bottom:8px;">
+            <strong>拦截原因 / 备注：</strong>${escapeHtml(item.notes || '低置信度或触发校验规则，需工程师确认公差与判据')}
+          </p>
+          <div class="quote-box" style="margin-bottom:10px;">原文引用：${escapeHtml(item.source_quote)}</div>
+          <div class="review-grid">
+            <div>
+              <label style="font-size:11px; color:var(--muted);">规范 / 公差（可由工程师修订后准入）：</label>
+              <input type="text" class="form-control" id="revSpec_${idx}" value="${escapeHtml(item.specification)}" />
+            </div>
+            <div>
+              <label style="font-size:11px; color:var(--muted);">检查方法：</label>
+              <input type="text" class="form-control" id="revMethod_${idx}" value="${escapeHtml(item.inspection_method)}" />
+            </div>
+            <div style="grid-column: span 2;">
+              <label style="font-size:11px; color:var(--muted);">判定准则：</label>
+              <input type="text" class="form-control" id="revCriteria_${idx}" value="${escapeHtml(item.acceptance_criteria)}" />
+            </div>
+          </div>
+          <div style="display:flex; gap:8px; justify-content:flex-end;">
+            <button class="btn-sm btn-reject" onclick="handleReview(${idx}, 'reject')">✖️ 驳回剔除</button>
+            <button class="btn-sm btn-approve" onclick="handleReview(${idx}, 'approve')">✔️ 工程师确认准入控制计划</button>
+          </div>
+        </div>
+      `).join('');
+    }
+
+    // 渲染校验报告与 JSON
+    const rep = pkg.validation_report;
+    const issues = [
+      ...rep.missing_clause_or_quote,
+      ...rep.unit_inconsistency,
+      ...rep.method_misclassified_as_criteria,
+      ...rep.unmarked_low_confidence
+    ];
+    document.getElementById('reportSummary').innerHTML = `
+      <div style="padding:10px 14px; background:#f8fafc; border:1px solid var(--border); border-radius:8px;">
+        <div style="font-weight:600; margin-bottom:6px;">后处理校验结论：</div>
+        ${issues.length === 0 ? '<div style="color:var(--success);">✅ 条款与原文引用 100% 匹配，未发现试验方法与判定准则倒置。</div>' : issues.map(i => `<div style="color:var(--danger);">• ${escapeHtml(i)}</div>`).join('')}
+        ${rep.suggestions.map(s => `<div style="color:var(--warning); margin-top:4px;">💡 ${escapeHtml(s)}</div>`).join('')}
+      </div>
+    `;
+    document.getElementById('jsonOutput').textContent = JSON.stringify(pkg, null, 2);
+  }
+
+  async function handleReview(idx, action) {
+    if (!currentPackage) return;
+    const orig = currentPackage.pending_review_items[idx];
+    let updated_item = null;
+    if (action === 'approve') {
+      updated_item = {
+        ...orig,
+        specification: document.getElementById(`revSpec_${idx}`).value,
+        inspection_method: document.getElementById(`revMethod_${idx}`).value,
+        acceptance_criteria: document.getElementById(`revCriteria_${idx}`).value,
+        confidence: '高',
+        needs_human_review: false,
+      };
+    }
+
+    const resp = await fetch('/api/approve-review', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        package: currentPackage,
+        review_index: idx,
+        action,
+        updated_item
+      })
+    });
+    if (resp.ok) {
+      const data = await resp.json();
+      renderResult(data.package, data.excel_download_url, data.json_download_url);
+    }
+  }
+
+  function openModal() {
+    document.getElementById('dsModal').classList.add('open');
+  }
+  function closeModal() {
+    document.getElementById('dsModal').classList.remove('open');
+  }
+  function saveDsConfig() {
+    const key = document.getElementById('dsApiKey').value.trim();
+    const url = document.getElementById('dsBaseUrl').value.trim();
+    const model = document.getElementById('dsModel').value;
+    localStorage.setItem('ds_api_key', key);
+    localStorage.setItem('ds_base_url', url);
+    localStorage.setItem('ds_model', model);
+    if (key) {
+      document.getElementById('engineMode').value = 'deepseek';
+    }
+    updateDsStatusIndicator();
+    closeModal();
+  }
+
+  function escapeHtml(str) {
+    return String(str || '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  }
+
+  window.addEventListener('DOMContentLoaded', initApp);
+</script>
+</body>
+</html>
