@@ -1,0 +1,96 @@
+"""
+Pydantic 数据模型定义，严格遵循 spec.md 第6节输出规范。
+"""
+
+from enum import Enum
+from typing import List, Optional
+from pydantic import BaseModel, Field, model_validator
+
+
+class CharacteristicCategory(str, Enum):
+    """特性类别枚举"""
+    DIMENSION = "尺寸"
+    MATERIAL = "材料"
+    PROCESS_PARAMETER = "工艺参数"
+    APPEARANCE = "外观"
+    PERFORMANCE = "性能"
+
+
+class ConfidenceLevel(str, Enum):
+    """置信度枚举"""
+    HIGH = "高"
+    MEDIUM = "中"
+    LOW = "低"
+
+
+class StandardCategory(str, Enum):
+    """标准分类枚举"""
+    TOLERANCE = "公差/尺寸标准"
+    MATERIAL = "材料标准"
+    PROCESS = "工艺标准"
+    APPEARANCE_PERFORMANCE = "外观/性能标准"
+
+
+class CheckItem(BaseModel):
+    """单条控制计划检查项数据模型"""
+    characteristic_name: str = Field(..., description="特性名称（控制计划术语）")
+    characteristic_category: CharacteristicCategory = Field(..., description="特性类别：尺寸/材料/工艺参数/外观/性能")
+    specification: str = Field(..., description="规范或公差，保留原文数值、单位、判定描述")
+    inspection_method: str = Field(..., description="检查方法，如卡尺、拉伸试验、目视、盐雾试验")
+    acceptance_criteria: str = Field(..., description="判定准则，合格/不合格的明确条件")
+    standard_clause: str = Field(..., description="标准条款号或章节号")
+    source_quote: str = Field(..., description="原文引用摘录")
+    confidence: ConfidenceLevel = Field(..., description="提取置信度：高/中/低")
+    needs_human_review: bool = Field(..., description="是否需人工确认")
+    notes: Optional[str] = Field(default=None, description="备注说明")
+
+    @model_validator(mode="after")
+    def enforce_low_confidence_review(self) -> "CheckItem":
+        # 规格门禁：低置信度项必须标记 needs_human_review = True
+        if self.confidence == ConfidenceLevel.LOW and not self.needs_human_review:
+            self.needs_human_review = True
+        return self
+
+
+class StandardInfo(BaseModel):
+    """标准基本元信息"""
+    file_name: str = Field(..., description="标准文件名")
+    standard_category: str = Field(..., description="标准分类名称或标识")
+    template_version: str = Field(default="v1.0", description="所用提取模板版本")
+
+
+class CoverageSummary(BaseModel):
+    """覆盖率与提取统计摘要"""
+    total_clauses_scanned: int = Field(default=0, ge=0, description="扫描标准条款总数")
+    check_items_extracted: int = Field(default=0, ge=0, description="提取检查项总数")
+    high_confidence: int = Field(default=0, ge=0, description="高置信度项数量")
+    medium_confidence: int = Field(default=0, ge=0, description="中置信度项数量")
+    low_confidence: int = Field(default=0, ge=0, description="低置信度项数量")
+
+
+class ValidationReport(BaseModel):
+    """后处理校验报告模型"""
+    missing_clause_or_quote: List[str] = Field(default_factory=list, description="缺失条款或原文引用的项")
+    unit_inconsistency: List[str] = Field(default_factory=list, description="单位不一致或缺失的项")
+    method_misclassified_as_criteria: List[str] = Field(default_factory=list, description="将试验方法误写为判定准则的项")
+    unmarked_low_confidence: List[str] = Field(default_factory=list, description="未正确标记人工审核的低置信度项")
+    suggestions: List[str] = Field(default_factory=list, description="整改建议或优化提示")
+
+
+class ExtractionPackage(BaseModel):
+    """完整输出包结构"""
+    standard_info: StandardInfo
+    check_items: List[CheckItem] = Field(default_factory=list, description="正式提取的检查项列表")
+    pending_review_items: List[CheckItem] = Field(default_factory=list, description="待确认清单（需人工确认或低置信度项）")
+    coverage_summary: CoverageSummary = Field(default_factory=CoverageSummary)
+    validation_report: ValidationReport = Field(default_factory=ValidationReport)
+
+    def refresh_summary(self) -> None:
+        """更新覆盖率统计数据"""
+        all_items = self.check_items + [
+            item for item in self.pending_review_items if item not in self.check_items
+        ]
+        self.coverage_summary.check_items_extracted = len(all_items)
+        self.coverage_summary.high_confidence = sum(1 for i in all_items if i.confidence == ConfidenceLevel.HIGH)
+        self.coverage_summary.medium_confidence = sum(1 for i in all_items if i.confidence == ConfidenceLevel.MEDIUM)
+        self.coverage_summary.low_confidence = sum(1 for i in all_items if i.confidence == ConfidenceLevel.LOW)

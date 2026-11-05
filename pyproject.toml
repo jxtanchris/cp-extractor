@@ -1,0 +1,21 @@
+[project]
+name = "cp-extractor"
+version = "0.1.0"
+description = "标准至控制计划检查项提取系统 (Standard to Control Plan Check Items Extraction System)"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "openpyxl>=3.1.5",
+    "pydantic>=2.14.2",
+    "pyyaml>=6.0.3",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.2.0",
+    "pytest-cov>=7.1.0",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
