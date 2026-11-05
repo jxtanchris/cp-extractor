@@ -25,13 +25,14 @@ JSON_SCHEMA_INSTRUCTION = """
       "inspection_method": "检查/试验方法（如三坐标、拉伸试验机、目视等）",
       "acceptance_criteria": "判定准则（合格/不合格的明确条件）",
       "standard_clause": "标准条款号（如 3.1）",
-      "source_quote": "原文引用（必须逐字摘录标准原文中的原句片段）",
+      "source_quote": "原文引用（必须逐字摘录标准原文中的关键原句片段，单条控制在80字以内）",
       "confidence": "高 | 中 | 低（三选一）",
       "needs_human_review": false,
       "notes": "备注说明（可选，对模糊或存疑项说明原因）"
     }
   ]
 }
+重要防截断约束：若标准文档包含超大型多行多列公差矩阵表，请按特性类别或公差等级聚合提炼（单次输出总条目数控制在 30 条以内），确保 JSON 完整闭合不被截断。
 """
 
 
@@ -43,7 +44,7 @@ class DeepSeekClient:
         api_key: Optional[str] = None,
         base_url: Optional[str] = None,
         model: Optional[str] = None,
-        timeout: float = 90.0,
+        timeout: float = 180.0,
     ):
         load_dotenv(override=True)
         self.env_api_key = os.getenv("DEEPSEEK_API_KEY", "").strip()
@@ -80,6 +81,7 @@ class DeepSeekClient:
                 {"role": "user", "content": full_user_prompt},
             ],
             "temperature": 0.1,
+            "max_tokens": 8192,
         }
 
         # deepseek-chat 支持 json_object 强制模式；deepseek-reasoner 不支持 response_format 参数
@@ -115,15 +117,69 @@ class DeepSeekClient:
             return json.dumps(items_list, ensure_ascii=False)
 
     @staticmethod
+    def _salvage_truncated_json(text: str) -> List[Dict[str, Any]]:
+        """
+        当大模型因输出超长 (max_tokens) 导致 JSON 末尾截断（报 Unterminated string 等错误）时，
+        自动抢救并提取截断前所有已完整闭合的检查项对象。
+        """
+        # 1. 尝试寻找最后一个完整的对象闭合位置 `}` 并补齐 `]}`
+        search_pos = len(text)
+        while search_pos > 0:
+            brace_idx = text.rfind("}", 0, search_pos)
+            if brace_idx == -1:
+                break
+            candidate_prefix = text[: brace_idx + 1].rstrip().rstrip(",")
+            for suffix in ("", "]", "]}"):
+                try:
+                    obj = json.loads(candidate_prefix + suffix)
+                    if isinstance(obj, dict):
+                        for key in ("items", "check_items", "data", "results"):
+                            if key in obj and isinstance(obj[key], list):
+                                return obj[key]
+                    elif isinstance(obj, list):
+                        return obj
+                except json.JSONDecodeError:
+                    pass
+            search_pos = brace_idx
+
+        # 2. 备选：使用正则/raw_decode 逐个扫描包含 characteristic_name 的 JSON 对象
+        decoder = json.JSONDecoder()
+        items: List[Dict[str, Any]] = []
+        idx = 0
+        while idx < len(text):
+            start = text.find("{", idx)
+            if start == -1:
+                break
+            try:
+                obj, end = decoder.raw_decode(text, start)
+                if isinstance(obj, dict) and "characteristic_name" in obj:
+                    items.append(obj)
+                    idx = end
+                    continue
+            except json.JSONDecodeError:
+                pass
+            idx = start + 1
+
+        if items:
+            return items
+        raise ValueError("DeepSeek 返回的 JSON 因超长截断且无法恢复有效条目，请尝试拆分文档后重试。")
+
+    @staticmethod
     def _parse_items_from_text(text: str) -> List[Dict[str, Any]]:
-        """从模型响应文本中安全解析并归一化检查项数组"""
+        """从模型响应文本中安全解析并归一化检查项数组（支持超长截断自动恢复）"""
         cleaned = text.strip()
         # 去除可能包裹的 ```json ... ``` 代码块
         code_match = re.search(r"```(?:json)?\s*([\s\S]*?)```", cleaned)
         if code_match:
             cleaned = code_match.group(1).strip()
+        elif cleaned.startswith("```"):
+            # 若代码块末尾因超长被截断，没有闭合的 ```，剥离首行 ```json
+            cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned).strip()
 
-        parsed = json.loads(cleaned)
+        try:
+            parsed = json.loads(cleaned)
+        except json.JSONDecodeError:
+            parsed = DeepSeekClient._salvage_truncated_json(cleaned)
         if isinstance(parsed, dict):
             for key in ("items", "check_items", "data", "results"):
                 if key in parsed and isinstance(parsed[key], list):

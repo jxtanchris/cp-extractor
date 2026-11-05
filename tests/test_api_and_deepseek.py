@@ -96,6 +96,28 @@ def test_deepseek_json_parser_compatibility():
     assert items[0]["characteristic_category"] == "材料"
     assert items[0]["confidence"] == "高"
 
+    # 测试超长截断 JSON (模拟 Unterminated string starting at line ...) 的自动抢救恢复能力
+    truncated_output = """{
+  "items": [
+    {
+      "characteristic_name": "螺纹大径公差",
+      "characteristic_category": "尺寸",
+      "specification": "6g",
+      "inspection_method": "螺纹通止规",
+      "acceptance_criteria": "通规通，止规止",
+      "standard_clause": "4.1",
+      "source_quote": "外螺纹大径公差带为 6g",
+      "confidence": "高",
+      "needs_human_review": false
+    },
+    {
+      "characteristic_name": "被截断的半条数据",
+      "characteristic_category": "尺寸",
+      "specification": "±0.1"""
+    salvaged_items = DeepSeekClient._parse_items_from_text(truncated_output)
+    assert len(salvaged_items) == 1
+    assert salvaged_items[0]["characteristic_name"] == "螺纹大径公差"
+
 
 def test_template_management_endpoints():
     """测试提示词模板查询、修改保存与恢复出厂默认接口"""
