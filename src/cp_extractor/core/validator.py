@@ -22,10 +22,18 @@ class QualityGateValidator:
         "探伤仪", "硬度计", "色差仪", "粗糙度仪", "拉伸试验", "冲击试验", "金相检验"
     ]
 
-    # 常见准则/公差关键词（用于检测是否误填入检查方法）
+    # 常见准则/公差关键词（用于检测是否误填入检查方法，含 ASME Y14.5 / ISO 1101 14类 GD&T 符号与 CTQ 单位）
     CRITERIA_KEYWORDS = [
-        "≥", "≤", ">", "<", "±", "%", "MPa", "mm", "无裂纹", "不得有", "级", "符合"
+        "≥", "≤", ">", "<", "±", "%", "MPa", "mm", "无裂纹", "不得有", "级", "符合",
+        "⎯", "⏥", "⌯", "⌭", "⌒", "⌓", "⊥", "∥", "∠", "⌖", "◎", "≡", "↗", "⌕",
+        "Ra", "Rz", "HRC", "HV", "HB", "N·m", "Ø", "φ"
     ]
+
+    # CTQ 规范：匹配带圆括号的参考尺寸，如 (120)、(62)、(Ø62)、（50mm）
+    REF_DIM_PATTERN = re.compile(r"^[\(（]\s*[ØφR]?\s*\d+(?:\.\d+)?\s*(?:mm|°|cm)?\s*[\)）]$", re.IGNORECASE)
+
+    # CTQ 规范：匹配单边公差写法，如 +0.05/-0.00、+0.1/0、0/-0.02
+    UNILATERAL_TOL_PATTERN = re.compile(r"[+-]?\d+(?:\.\d+)?\s*/\s*[+-]?\d+(?:\.\d+)?")
 
     def validate_package(
         self,
@@ -91,11 +99,25 @@ class QualityGateValidator:
             # 4. 单位完整性初筛（数值存在但无单位/判定说明）
             if re.search(r"\d", item.specification):
                 # 含有数字时，检查是否有常见单位或公差符号
-                has_unit_or_symbol = bool(re.search(r"(mm|cm|m|%|MPa|GPa|N|kg|℃|°|h|s|min|μm|nm|±|°C)", item.specification, re.IGNORECASE))
-                if not has_unit_or_symbol and not re.search(r"(级|无|不得|表面)", item.specification):
+                has_unit_or_symbol = bool(re.search(r"(mm|cm|m|%|MPa|GPa|N|kg|℃|°|h|s|min|μm|nm|±|°C|HRC|HV|HB|Ra|Rz|⎯|⏥|⌯|⌭|⌒|⌓|⊥|∥|∠|⌖|◎|≡|↗|⌕)", item.specification, re.IGNORECASE))
+                if not has_unit_or_symbol and not re.search(r"(级|无|不得|表面|ISO\s*2768)", item.specification, re.IGNORECASE):
                     report.unit_inconsistency.append(
                         f"{item_tag}: 规范数值 '{item.specification}' 缺少明确物理单位或级别说明"
                     )
+
+            # 5. CTQ 门禁规则 A：括号参考尺寸 (Reference Dimension) 拦截
+            if self.REF_DIM_PATTERN.match(item.specification.strip()):
+                msg = f"{item_tag}: 检测到括号参考尺寸 '{item.specification}'，按 CTQ 规范参考尺寸非受控，已拦截待确认"
+                report.suggestions.append(msg)
+                item.notes = item.notes or "括号标注为参考尺寸 (Reference Dimension)，请工程师确认是否剔除"
+                needs_review = True
+
+            # 6. CTQ 门禁规则 B：单边公差原样保留校验（防止将 +0.05/-0.00 篡改为 ±0.05）
+            if self.UNILATERAL_TOL_PATTERN.search(item.source_quote) and "±" in item.specification and not self.UNILATERAL_TOL_PATTERN.search(item.specification):
+                msg = f"{item_tag}: 原文为单边公差，但提取规范被改写为对称公差 '{item.specification}'，违反 CTQ 逐字保真原则"
+                report.missing_clause_or_quote.append(msg)
+                item.notes = item.notes or "单边公差被改写为双边公差 (±)，请核对原文恢复为单边公差格式"
+                needs_review = True
 
             # 更新 items
             item.needs_human_review = needs_review

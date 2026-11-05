@@ -34,7 +34,8 @@ def test_prompt_builder():
     
     # 基础模板
     base = builder.get_base_template()
-    assert "汽车行业质量工程师" in base
+    assert "质量工程师" in base
+    assert "CTQ" in base
     
     # 4类插件装配
     categories = ["tolerance", "material", "process", "appearance_performance"]
@@ -42,6 +43,47 @@ def test_prompt_builder():
         prompt = builder.build_extraction_prompt(cat, context_text="示例标准文本")
         assert "示例标准文本" in prompt
         assert "输出要求" in prompt
+
+
+def test_ctq_reference_dim_and_unilateral_tolerance_gate():
+    """测试融合自 CTQ-extraction 的括号参考尺寸拦截与单边公差防篡改门禁"""
+    validator = QualityGateValidator()
+
+    # 1. 括号参考尺寸 (120) 应被拦截至 pending_review_items
+    ref_dim_item = CheckItem(
+        characteristic_name="辅助总长",
+        characteristic_category=CharacteristicCategory.DIMENSION,
+        specification="(120)",
+        inspection_method="卡尺",
+        acceptance_criteria="参考尺寸 (120) mm",
+        standard_clause="3.1",
+        source_quote="辅助总长 (120)",
+        confidence=ConfidenceLevel.HIGH,
+        needs_human_review=False,
+    )
+
+    # 2. 原文为单边公差 +0.05/-0.00，但被错误改写为 ±0.05 应被拦截
+    tampered_tol_item = CheckItem(
+        characteristic_name="内孔直径",
+        characteristic_category=CharacteristicCategory.DIMENSION,
+        specification="Ø25 ± 0.05 mm",
+        inspection_method="三坐标",
+        acceptance_criteria="Ø25 ± 0.05 mm",
+        standard_clause="3.2",
+        source_quote="内孔直径 Ø25 +0.05/-0.00 mm",
+        confidence=ConfidenceLevel.HIGH,
+        needs_human_review=False,
+    )
+
+    pkg = ExtractionPackage(
+        standard_info=StandardInfo(file_name="DRAWING_CTQ.pdf", standard_category="公差/尺寸标准"),
+        check_items=[ref_dim_item, tampered_tol_item],
+    )
+    res = validator.validate_package(pkg)
+    assert len(res.check_items) == 0
+    assert len(res.pending_review_items) == 2
+    assert any("括号参考尺寸" in s for s in res.validation_report.suggestions)
+    assert any("单边公差" in m for m in res.validation_report.missing_clause_or_quote)
 
 
 def test_quality_gate_validator():

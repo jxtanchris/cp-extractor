@@ -704,6 +704,9 @@
             <button type="button" class="preset-chip" onclick="insertPresetRule('review_advisory')">
               🟣 拦截建议项：带有"宜、参考、协商"的条款需提取，但强制标记 needs_human_review=true
             </button>
+            <button type="button" class="preset-chip" onclick="insertPresetRule('ctq_drawing_rules')">
+              📐 CTQ 图纸规范：过滤括号参考尺寸 (120)、单边公差 (+0.05/-0.00) 严禁改写为 ±、完整提取 14 类 GD&T 控制框
+            </button>
           </div>
         </div>
 
@@ -1044,7 +1047,8 @@
     loose_gauge: '\n- 【人工确认宽松规则】当标准条款的数值公差明确，但未显式指定具体测量工具时，允许根据工程常识自动填入通用检查方法（如线性尺寸填"卡尺/千分尺"、外观缺陷填"目视"），并将 confidence 设为"高"、needs_human_review 设为 false。',
     strict_method: '\n- 【人工确认严格规则】凡标准原文中未明确写出具体检验/试验方法或设备名称的条款，严禁自行假设高置信度，必须将 confidence 设为"低"且 needs_human_review 设为 true，并在 notes 中注明"原文未指定具体检验方法，需工程师确认"。',
     ignore_advisory: '\n- 【建议性条款过滤规则】凡条款中使用"宜、可、建议、参考、推荐、不做交货判据"等非强制性表述的，一律直接忽略不提取。',
-    review_advisory: '\n- 【建议性条款拦截规则】对于带有"宜、参考、由供需双方协商、不做交货否决判据"的条款，仍需提取为检查项，但必须将 confidence 设为"低"且 needs_human_review 设为 true，交由质量工程师裁定是否纳入控制计划。'
+    review_advisory: '\n- 【建议性条款拦截规则】对于带有"宜、参考、由供需双方协商、不做交货否决判据"的条款，仍需提取为检查项，但必须将 confidence 设为"低"且 needs_human_review 设为 true，交由质量工程师裁定是否纳入控制计划。',
+    ctq_drawing_rules: '\n- 【CTQ & GD&T 专项规则】① 严禁提取带圆括号的参考尺寸（如 (120)、(Ø62)）；② 单边公差（如 +0.05/-0.00）必须 100% 逐字保留，严禁折算改写为 ±0.05；③ 提取 GD&T 形位公差（⎯, ⏥, ⌯, ⌭, ⌒, ⌓, ⊥, ∥, ∠, ⌖, ◎, ≡, ↗, ⌕）时需注明关联基准（如 A-B-C）并完整保留控制框描述。'
   };
 
   async function openPromptModal(preferredKey) {
