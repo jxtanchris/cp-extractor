@@ -1,16 +1,30 @@
 """
 文档解析模块
-支持将上传的 Markdown (.md)、纯文本 (.txt)、PDF (.pdf)、Word (.docx) 转换为结构化文本（保留表格结构）。
+支持将上传的：
+- 截图/图片 (.png / .jpg / .jpeg / .webp / .bmp / .tiff / .heic) -> 调用 macOS Vision 高精度中英混合 OCR（含表格同行对齐）
+- PDF (.pdf) -> 优先提取原生文本层；若为扫描件/图片型 PDF 则自动无缝回退至 OCR 识别
+- Word (.docx) -> 提取段落并将表格转换为 Markdown 表格
+- Markdown / 纯文本 (.md / .txt)
+转换为结构化文本。
 """
 
 import io
+import shutil
+import subprocess
+import tempfile
 from pathlib import Path
 from pypdf import PdfReader
 import docx
 
+ROOT_DIR = Path(__file__).resolve().parent.parent.parent.parent
+VISION_OCR_BIN = ROOT_DIR / "scripts" / "vision_ocr"
+VISION_OCR_SRC = ROOT_DIR / "scripts" / "vision_ocr.swift"
+
+IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tiff", ".tif", ".heic", ".gif")
+
 
 class DocumentParser:
-    """多格式标准文档解析器"""
+    """多格式标准文档与截图解析器（内置 OCR 支持）"""
 
     @staticmethod
     def parse_bytes(filename: str, data: bytes) -> str:
@@ -21,8 +35,12 @@ class DocumentParser:
             return DocumentParser._parse_pdf(data)
         elif ext == ".docx":
             return DocumentParser._parse_docx(data)
+        elif ext in IMAGE_EXTENSIONS:
+            return DocumentParser._parse_image(data, ext)
         else:
-            raise ValueError(f"暂不支持的文件格式: {ext}（请上传 .md, .txt, .pdf 或 .docx）")
+            raise ValueError(
+                f"暂不支持的文件格式: {ext}（支持截图 .png/.jpg/.webp、.pdf、.docx、.md、.txt）"
+            )
 
     @staticmethod
     def _parse_pdf(data: bytes) -> str:
@@ -32,7 +50,72 @@ class DocumentParser:
             txt = page.extract_text() or ""
             if txt.strip():
                 pages.append(f"<!-- 第 {idx} 页 -->\n{txt.strip()}")
-        return "\n\n".join(pages)
+
+        combined = "\n\n".join(pages)
+        # 若原生 PDF 提取出的有效字符极少（如扫描版/截图合成 PDF），自动启动 OCR 识别
+        if len(combined.strip()) < 20:
+            ocr_text = DocumentParser._run_ocr(data, suffix=".pdf")
+            if ocr_text.strip():
+                return ocr_text
+        return combined
+
+    @staticmethod
+    def _parse_image(data: bytes, ext: str = ".png") -> str:
+        ocr_text = DocumentParser._run_ocr(data, suffix=ext or ".png")
+        if not ocr_text.strip():
+            raise ValueError("未能从截图中识别出文字，请确认图片清晰且包含标准文本内容。")
+        return f"<!-- 标准截图 OCR 识别内容 -->\n{ocr_text.strip()}"
+
+    @staticmethod
+    def _ensure_vision_binary() -> Path | None:
+        if VISION_OCR_BIN.exists():
+            return VISION_OCR_BIN
+        if VISION_OCR_SRC.exists() and shutil.which("swiftc"):
+            try:
+                subprocess.run(
+                    ["swiftc", "-O", str(VISION_OCR_SRC), "-o", str(VISION_OCR_BIN)],
+                    check=True,
+                    capture_output=True,
+                    timeout=30,
+                )
+                return VISION_OCR_BIN
+            except Exception:
+                return None
+        return None
+
+    @staticmethod
+    def _run_ocr(data: bytes, suffix: str = ".png") -> str:
+        with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+            tmp.write(data)
+            tmp_path = Path(tmp.name)
+
+        try:
+            # 1. 优先使用 macOS Apple Vision 原生高精度中英混合 OCR（自动按行对齐表格）
+            bin_path = DocumentParser._ensure_vision_binary()
+            if bin_path is not None:
+                res = subprocess.run(
+                    [str(bin_path), str(tmp_path)],
+                    capture_output=True,
+                    text=True,
+                    timeout=60,
+                )
+                if res.returncode == 0 and res.stdout.strip():
+                    return res.stdout.strip()
+
+            # 2. 备选：调用系统 tesseract CLI
+            if shutil.which("tesseract") and suffix != ".pdf":
+                res = subprocess.run(
+                    ["tesseract", str(tmp_path), "stdout"],
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                )
+                if res.returncode == 0 and res.stdout.strip():
+                    return res.stdout.strip()
+
+            return ""
+        finally:
+            tmp_path.unlink(missing_ok=True)
 
     @staticmethod
     def _parse_docx(data: bytes) -> str:

@@ -43,3 +43,11 @@ Thumbs.db
 # Output artifacts
 output/
 temp/
+
+# Secrets & Environment
+.env
+.env.local
+
+# Compiled native binaries
+scripts/vision_ocr
+Startup.txt

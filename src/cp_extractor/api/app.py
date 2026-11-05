@@ -15,7 +15,7 @@ import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse
 from pydantic import BaseModel, Field
 
@@ -61,6 +61,10 @@ class ReviewUpdateRequest(BaseModel):
     review_index: int
     action: str = Field(..., description="approve | reject")
     updated_item: Optional[Dict[str, Any]] = None
+
+
+class TemplateUpdateRequest(BaseModel):
+    content: str = Field(..., description="更新后的模板 Markdown 内容")
 
 
 SAMPLE_META = {
@@ -119,6 +123,8 @@ def index():
 
 @app.get("/api/config")
 def get_config():
+    from dotenv import load_dotenv
+    load_dotenv(override=True)
     env_key = os.getenv("DEEPSEEK_API_KEY", "").strip()
     return {
         "has_env_key": bool(env_key),
@@ -174,6 +180,101 @@ async def upload_standard(file: UploadFile = File(...)):
         "detected_key": key,
         "detected_category": cat_enum.value,
     }
+
+
+@app.post("/api/extract-document")
+async def extract_from_uploaded_document(
+    file: UploadFile = File(...),
+    category: str = Form(default="tolerance"),
+    deepseek_api_key: Optional[str] = Form(default=None),
+    deepseek_base_url: Optional[str] = Form(default=None),
+    deepseek_model: Optional[str] = Form(default=None),
+):
+    """
+    核心三步闭环接口：
+    1. 接收上传的 PDF / Word / Markdown 标准文件并解析正文
+    2. 根据所选标准类别组装 (公共基础模板 + 类别专用插件)
+    3. 调用 DeepSeek LLM 提取检查项 -> 后处理门禁校验 -> 生成 Excel 与 JSON
+    """
+    raw = await file.read()
+    if not raw:
+        raise HTTPException(status_code=400, detail="上传的文件为空")
+
+    try:
+        parsed_text = DocumentParser.parse_bytes(file.filename or "standard.pdf", raw)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    if not parsed_text.strip():
+        raise HTTPException(
+            status_code=400,
+            detail="无法从该文件中提取出有效文本（如果是扫描件图片型 PDF，请先经 OCR/MinerU 转换）",
+        )
+
+    ds_client = DeepSeekClient(
+        api_key=deepseek_api_key,
+        base_url=deepseek_base_url,
+        model=deepseek_model,
+    )
+    if not ds_client.is_configured:
+        raise HTTPException(
+            status_code=400,
+            detail="未检测到 DeepSeek API Key。请点击右上角【DeepSeek API 配置】填入你的 Key，或在 .env 文件中配置 DEEPSEEK_API_KEY。",
+        )
+
+    try:
+        pipeline = StandardExtractorPipeline(llm_callable=ds_client.extract_check_items_json)
+        package = pipeline.run(
+            file_name=file.filename or "standard.pdf",
+            content=parsed_text,
+            manual_category=category if category != "auto" else None,
+        )
+        downloads = _persist_artifacts(package)
+        return {
+            "engine_used": f"DeepSeek ({ds_client.model})",
+            "parsed_length": len(parsed_text),
+            "parsed_preview": parsed_text[:2000],
+            "package": package.model_dump(mode="json"),
+            **downloads,
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/templates")
+def list_templates():
+    """获取所有提示词模板（公共基础模板 + 四类专用插件）"""
+    builder = PromptBuilder()
+    return {
+        "templates": builder.list_all_templates(),
+        "json_schema_instruction": JSON_SCHEMA_INSTRUCTION.strip(),
+    }
+
+
+@app.put("/api/templates/{template_key}")
+def update_template(template_key: str, req: TemplateUpdateRequest):
+    """保存修改后的提示词模板内容"""
+    builder = PromptBuilder()
+    try:
+        updated = builder.save_template(template_key, req.content)
+        return updated
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"保存模板失败: {e}")
+
+
+@app.post("/api/templates/{template_key}/reset")
+def reset_template(template_key: str):
+    """将指定提示词模板恢复为系统默认内容"""
+    builder = PromptBuilder()
+    try:
+        reset_data = builder.reset_template(template_key)
+        return reset_data
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"恢复默认模板失败: {e}")
 
 
 @app.post("/api/preview-prompt")

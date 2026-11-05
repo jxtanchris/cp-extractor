@@ -45,7 +45,9 @@ class DeepSeekClient:
         model: Optional[str] = None,
         timeout: float = 90.0,
     ):
-        self.api_key = (api_key or os.getenv("DEEPSEEK_API_KEY", "")).strip()
+        load_dotenv(override=True)
+        self.env_api_key = os.getenv("DEEPSEEK_API_KEY", "").strip()
+        self.api_key = (api_key or self.env_api_key).strip()
         raw_base = (base_url or os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")).strip().rstrip("/")
         if raw_base.endswith("/v1"):
             self.base_url = raw_base
@@ -91,6 +93,18 @@ class DeepSeekClient:
 
         with httpx.Client(timeout=self.timeout) as client:
             resp = client.post(f"{self.base_url}/chat/completions", headers=headers, json=payload)
+            # 若前端浏览器缓存了过期/无效的 API Key (HTTP 401)，且服务端 .env 配置了不同的 Key，自动回退使用 .env Key 重试
+            if resp.status_code == 401 and self.env_api_key and self.env_api_key != self.api_key:
+                self.api_key = self.env_api_key
+                headers["Authorization"] = f"Bearer {self.api_key}"
+                resp = client.post(f"{self.base_url}/chat/completions", headers=headers, json=payload)
+
+            # 若用户在 .env 中误填了 deepseek-flash 等非官方模型名，自动回退至 deepseek-chat 重试
+            if resp.status_code == 400 and "Model Not Exist" in resp.text and payload["model"] != "deepseek-chat":
+                payload["model"] = "deepseek-chat"
+                payload["response_format"] = {"type": "json_object"}
+                resp = client.post(f"{self.base_url}/chat/completions", headers=headers, json=payload)
+
             if resp.status_code != 200:
                 detail = resp.text[:400]
                 raise RuntimeError(f"DeepSeek API 调用失败 (HTTP {resp.status_code}): {detail}")

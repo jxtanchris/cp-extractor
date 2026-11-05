@@ -95,3 +95,30 @@ def test_deepseek_json_parser_compatibility():
     assert len(items) == 1
     assert items[0]["characteristic_category"] == "材料"
     assert items[0]["confidence"] == "高"
+
+
+def test_template_management_endpoints():
+    """测试提示词模板查询、修改保存与恢复出厂默认接口"""
+    # 1. 获取所有模板
+    list_resp = client.get("/api/templates")
+    assert list_resp.status_code == 200
+    data = list_resp.json()
+    assert len(data["templates"]) == 5
+    base_tpl = next(t for t in data["templates"] if t["key"] == "base")
+    original_content = base_tpl["content"]
+
+    try:
+        # 2. 修改 base 模板并验证已标记 is_modified
+        custom_text = original_content + "\n5. 额外自定义人工确认规则测试。"
+        put_resp = client.put("/api/templates/base", json={"content": custom_text})
+        assert put_resp.status_code == 200
+        assert put_resp.json()["is_modified"] is True
+        assert "额外自定义人工确认规则测试" in put_resp.json()["content"]
+
+        # 3. 恢复默认并验证
+        reset_resp = client.post("/api/templates/base/reset")
+        assert reset_resp.status_code == 200
+        assert reset_resp.json()["is_modified"] is False
+    finally:
+        # 确保测试后模板保持原始状态
+        client.put("/api/templates/base", json={"content": original_content})

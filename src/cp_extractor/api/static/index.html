@@ -10,7 +10,6 @@
       --card: #ffffff;
       --primary: #1a4b8c;
       --primary-hover: #133869;
-      --accent: #0ea5e9;
       --success: #16a34a;
       --warning: #d97706;
       --warning-bg: #fffbeb;
@@ -36,47 +35,39 @@
       justify-content: space-between;
       box-shadow: 0 2px 8px rgba(0,0,0,0.12);
     }
-    .brand {
-      display: flex;
-      align-items: center;
-      gap: 12px;
-    }
-    .brand h1 { font-size: 18px; font-weight: 600; letter-spacing: 0.3px; }
+    .brand { display: flex; align-items: center; gap: 12px; }
+    .brand h1 { font-size: 18px; font-weight: 600; }
     .brand .tag {
       background: rgba(255,255,255,0.16);
       font-size: 12px;
       padding: 2px 8px;
       border-radius: 4px;
     }
-    .top-controls {
-      display: flex;
-      align-items: center;
-      gap: 12px;
-    }
-    .top-controls select, .btn-top {
-      background: rgba(255,255,255,0.12);
+    .top-controls { display: flex; align-items: center; gap: 10px; }
+    .btn-top {
+      background: rgba(255,255,255,0.14);
       color: #fff;
-      border: 1px solid rgba(255,255,255,0.28);
-      padding: 6px 12px;
+      border: 1px solid rgba(255,255,255,0.3);
+      padding: 6px 14px;
       border-radius: 6px;
       font-size: 13px;
       cursor: pointer;
+      text-decoration: none;
     }
-    .top-controls select option { color: #1e293b; background: #fff; }
-    .btn-top:hover { background: rgba(255,255,255,0.22); }
+    .btn-top:hover { background: rgba(255,255,255,0.24); }
     .status-dot {
       display: inline-block;
       width: 8px;
       height: 8px;
       border-radius: 50%;
-      margin-right: 5px;
+      margin-right: 6px;
       background: #fbbf24;
     }
     .status-dot.ready { background: #4ade80; }
 
     .workspace {
       display: grid;
-      grid-template-columns: 440px 1fr;
+      grid-template-columns: 390px 1fr;
       gap: 16px;
       padding: 16px 20px;
       height: calc(100vh - 60px);
@@ -100,98 +91,95 @@
       font-weight: 600;
     }
     .panel-body {
-      padding: 14px 16px;
+      padding: 16px;
       flex: 1;
       overflow-y: auto;
       display: flex;
       flex-direction: column;
-      gap: 12px;
+      gap: 18px;
     }
 
-    .sample-bar {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 6px;
-    }
-    .chip-btn {
-      background: #f1f5f9;
-      border: 1px solid #cbd5e1;
-      color: #334155;
-      padding: 5px 10px;
-      border-radius: 6px;
-      font-size: 12px;
-      cursor: pointer;
-      transition: all 0.15s;
-    }
-    .chip-btn:hover, .chip-btn.active {
-      background: #e0f2fe;
-      border-color: #0284c7;
-      color: #0369a1;
+    /* Step Blocks */
+    .step-block { display: flex; flex-direction: column; gap: 8px; }
+    .step-title {
+      font-size: 13.5px;
       font-weight: 600;
-    }
-
-    .form-row {
+      color: #0f172a;
       display: flex;
-      gap: 8px;
       align-items: center;
+      gap: 8px;
     }
-    .form-row label {
+    .step-num {
+      background: var(--primary);
+      color: #fff;
+      width: 22px;
+      height: 22px;
+      border-radius: 50%;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
       font-size: 12px;
-      color: var(--muted);
-      white-space: nowrap;
-    }
-    .form-control {
-      width: 100%;
-      padding: 6px 10px;
-      border: 1px solid var(--border);
-      border-radius: 6px;
-      font-size: 13px;
+      font-weight: 700;
     }
 
-    .tabs {
-      display: flex;
-      border-bottom: 1px solid var(--border);
-      gap: 4px;
-    }
-    .tab-btn {
-      padding: 7px 12px;
-      border: none;
-      background: transparent;
-      color: var(--muted);
-      font-size: 13px;
-      font-weight: 500;
+    /* Dropzone */
+    .dropzone {
+      border: 2px dashed #94a3b8;
+      border-radius: 10px;
+      padding: 24px 16px;
+      text-align: center;
+      background: #f8fafc;
       cursor: pointer;
-      border-bottom: 2px solid transparent;
+      transition: all 0.2s;
     }
-    .tab-btn.active {
-      color: var(--primary);
-      border-bottom-color: var(--primary);
-      font-weight: 600;
+    .dropzone:hover, .dropzone.dragover {
+      border-color: var(--primary);
+      background: #eff6ff;
     }
+    .dropzone.has-file {
+      border-style: solid;
+      border-color: var(--success);
+      background: #f0fdf4;
+    }
+    .dropzone .icon { font-size: 32px; margin-bottom: 6px; }
+    .dropzone .main-text { font-weight: 600; color: #1e293b; font-size: 14px; }
+    .dropzone .sub-text { font-size: 12px; color: var(--muted); margin-top: 4px; }
 
-    textarea.editor {
-      flex: 1;
-      width: 100%;
-      min-height: 300px;
-      resize: none;
-      border: 1px solid var(--border);
-      border-radius: 6px;
-      padding: 10px;
-      font-family: "SFMono-Regular", Consolas, Menlo, monospace;
-      font-size: 12.5px;
-      line-height: 1.55;
-      background: #fcfcfd;
+    /* Category Cards */
+    .cat-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
     }
+    .cat-card {
+      border: 1.5px solid var(--border);
+      border-radius: 8px;
+      padding: 10px 12px;
+      cursor: pointer;
+      background: #fff;
+      transition: all 0.15s;
+      text-align: left;
+    }
+    .cat-card:hover { border-color: #94a3b8; background: #f8fafc; }
+    .cat-card.selected {
+      border-color: var(--primary);
+      background: #eff6ff;
+      box-shadow: 0 0 0 1px var(--primary);
+    }
+    .cat-card .cat-name { font-weight: 600; font-size: 13px; color: #0f172a; }
+    .cat-card .cat-desc { font-size: 11px; color: var(--muted); margin-top: 2px; }
+
     .btn-primary {
       background: var(--primary);
       color: #fff;
       border: none;
-      padding: 10px 16px;
+      padding: 13px 16px;
       border-radius: 8px;
       font-weight: 600;
-      font-size: 14px;
+      font-size: 15px;
       cursor: pointer;
       transition: background 0.15s;
+      width: 100%;
     }
     .btn-primary:hover { background: var(--primary-hover); }
     .btn-primary:disabled { opacity: 0.6; cursor: not-allowed; }
@@ -213,18 +201,34 @@
     .kpi-card.warn { background: var(--warning-bg); border-color: #fde68a; }
     .kpi-card.warn .val { color: var(--warning); }
 
-    /* Table */
+    .tabs {
+      display: flex;
+      border-bottom: 1px solid var(--border);
+      gap: 4px;
+    }
+    .tab-btn {
+      padding: 7px 14px;
+      border: none;
+      background: transparent;
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+      border-bottom: 2px solid transparent;
+    }
+    .tab-btn.active {
+      color: var(--primary);
+      border-bottom-color: var(--primary);
+      font-weight: 600;
+    }
+
     .table-wrap {
       flex: 1;
       overflow: auto;
       border: 1px solid var(--border);
       border-radius: 8px;
     }
-    table {
-      width: 100%;
-      border-collapse: collapse;
-      font-size: 12.5px;
-    }
+    table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
     th {
       position: sticky;
       top: 0;
@@ -236,11 +240,7 @@
       font-weight: 600;
       white-space: nowrap;
     }
-    td {
-      padding: 8px 10px;
-      border-bottom: 1px solid var(--border);
-      vertical-align: top;
-    }
+    td { padding: 8px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
     tr:hover td { background: #f8fafc; }
 
     .badge {
@@ -284,6 +284,13 @@
       gap: 8px;
       margin-bottom: 10px;
     }
+    .form-control {
+      width: 100%;
+      padding: 6px 10px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      font-size: 13px;
+    }
     .btn-sm {
       padding: 5px 12px;
       border-radius: 6px;
@@ -305,7 +312,6 @@
     }
     .btn-dl.secondary { background: #475569; }
 
-    /* Modal */
     .modal-backdrop {
       position: fixed;
       inset: 0;
@@ -323,9 +329,130 @@
       padding: 20px;
       box-shadow: 0 10px 25px rgba(0,0,0,0.2);
     }
+    .modal.modal-lg {
+      width: 880px;
+      max-width: 95vw;
+      max-height: 90vh;
+      display: flex;
+      flex-direction: column;
+      padding: 0;
+      overflow: hidden;
+    }
     .modal h3 { margin-bottom: 12px; font-size: 16px; }
     .modal .field { margin-bottom: 12px; }
     .modal .field label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 4px; }
+
+    /* Prompt Editor Styles */
+    .prompt-modal-header {
+      padding: 14px 20px;
+      background: #f8fafc;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .prompt-modal-body {
+      display: grid;
+      grid-template-columns: 235px 1fr;
+      flex: 1;
+      min-height: 460px;
+      overflow: hidden;
+    }
+    .tpl-sidebar {
+      border-right: 1px solid var(--border);
+      background: #f8fafc;
+      padding: 12px 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      overflow-y: auto;
+    }
+    .tpl-nav-item {
+      padding: 9px 11px;
+      border-radius: 7px;
+      cursor: pointer;
+      border: 1px solid transparent;
+      text-align: left;
+      background: transparent;
+      transition: all 0.15s;
+    }
+    .tpl-nav-item:hover { background: #e2e8f0; }
+    .tpl-nav-item.active {
+      background: #eff6ff;
+      border-color: var(--primary);
+      color: var(--primary);
+    }
+    .tpl-nav-title {
+      font-size: 13px;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .tpl-nav-path {
+      font-size: 11px;
+      color: var(--muted);
+      margin-top: 2px;
+      font-family: monospace;
+    }
+    .tpl-editor-pane {
+      padding: 16px 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      overflow-y: auto;
+    }
+    .preset-bar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      background: #f8fafc;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 8px 10px;
+    }
+    .preset-chip {
+      font-size: 11.5px;
+      background: #fff;
+      border: 1px solid #cbd5e1;
+      border-radius: 5px;
+      padding: 4px 8px;
+      cursor: pointer;
+      color: #334155;
+      transition: all 0.15s;
+    }
+    .preset-chip:hover {
+      border-color: var(--primary);
+      color: var(--primary);
+      background: #eff6ff;
+    }
+    .prompt-textarea {
+      width: 100%;
+      flex: 1;
+      min-height: 230px;
+      font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+      font-size: 13px;
+      line-height: 1.6;
+      padding: 12px;
+      border: 1.5px solid var(--border);
+      border-radius: 8px;
+      resize: vertical;
+      color: #0f172a;
+      background: #ffffff;
+    }
+    .prompt-textarea:focus {
+      outline: none;
+      border-color: var(--primary);
+      box-shadow: 0 0 0 2px rgba(26,75,140,0.12);
+    }
+    .prompt-modal-footer {
+      padding: 12px 20px;
+      border-top: 1px solid var(--border);
+      background: #f8fafc;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
   </style>
 </head>
 <body>
@@ -333,73 +460,93 @@
 <header>
   <div class="brand">
     <h1>CP-Extractor 标准→控制计划检查项提取系统</h1>
-    <span class="tag">IATF 16949 / APQP</span>
+    <span class="tag">DeepSeek LLM 驱动</span>
   </div>
   <div class="top-controls">
-    <label style="font-size:12px;">提取引擎：</label>
-    <select id="engineMode">
-      <option value="auto">智能切换 (已配Key用DeepSeek / 否则内置基准)</option>
-      <option value="deepseek">强制使用 DeepSeek 大模型 API</option>
-      <option value="rule">内置结构化基准引擎 (离线免Key极速)</option>
-    </select>
+    <button class="btn-top" onclick="openPromptModal()">
+      📝 提示词与人工确认标准配置
+    </button>
     <button class="btn-top" onclick="openModal()">
       <span id="dsStatusDot" class="status-dot"></span>DeepSeek API 配置
     </button>
-    <a href="/docs" target="_blank" class="btn-top" style="text-decoration:none;">Swagger API 文档</a>
+    <a href="/docs" target="_blank" class="btn-top">API 文档</a>
   </div>
 </header>
 
 <div class="workspace">
-  <!-- 左侧：输入与提示词组装 -->
+  <!-- 左侧：三步极简操作区 -->
   <div class="panel">
     <div class="panel-header">
-      <span>1. 标准文档输入与插件路由</span>
-      <label class="chip-btn" style="margin:0;">
-        📂 上传文档 (.md/.pdf/.docx)
-        <input type="file" id="fileUpload" accept=".md,.txt,.pdf,.docx" style="display:none" onchange="handleUpload(event)" />
-      </label>
+      <span>标准文件提取向导</span>
     </div>
     <div class="panel-body">
-      <div>
-        <div style="font-size:12px; color:var(--muted); margin-bottom:6px;">一键加载四类基准汽车标准样本：</div>
-        <div class="sample-bar" id="sampleBar"></div>
+
+      <!-- 第一步：上传标准文档或粘贴截图 -->
+      <div class="step-block">
+        <div class="step-title">
+          <span class="step-num">1</span>
+          <span>上传标准文档或截图 (支持 Cmd+V 粘贴截图)</span>
+        </div>
+        <label class="dropzone" id="dropzone">
+          <input type="file" id="fileInput" accept=".pdf,.docx,.md,.txt,.png,.jpg,.jpeg,.webp,.bmp,.tiff,.heic,image/*" style="display:none" onchange="onFileSelected(event)" />
+          <div class="icon" id="dzIcon">📄</div>
+          <div class="main-text" id="dzTitle">点击选择、拖拽文档或按 Cmd+V 粘贴截图</div>
+          <div class="sub-text" id="dzSub">支持 PDF(含扫描件)、Word、截图(.png/.jpg) 及 Markdown</div>
+          <img id="dzPreviewImg" style="display:none; max-width:100%; max-height:110px; margin-top:8px; border-radius:6px; border:1px solid var(--border); object-fit:contain;" alt="截图预览" />
+        </label>
       </div>
 
-      <div class="form-row">
-        <label>文件名称：</label>
-        <input type="text" id="fileNameInput" class="form-control" value="sample_tolerance_iso2768.md" />
+      <!-- 第二步：选择标准所属类别 -->
+      <div class="step-block">
+        <div class="step-title" style="justify-content: space-between;">
+          <div style="display:flex; align-items:center; gap:8px;">
+            <span class="step-num">2</span>
+            <span>选择文档所属类别（加载对应专用插件）</span>
+          </div>
+          <button type="button" class="btn-sm" style="background:#eff6ff; color:var(--primary); border:1px solid #bfdbfe; padding:3px 9px; font-size:11.5px;" onclick="openPromptModal(selectedCategory)">
+            ⚙️ 调整提示词/确认规则
+          </button>
+        </div>
+        <div class="cat-grid" id="catGrid">
+          <div class="cat-card selected" data-cat="tolerance" onclick="selectCategory('tolerance', this)">
+            <div class="cat-name">📐 公差/尺寸标准</div>
+            <div class="cat-desc">线性公差、GD&T、未注公差表</div>
+          </div>
+          <div class="cat-card" data-cat="material" onclick="selectCategory('material', this)">
+            <div class="cat-name">🧪 材料标准</div>
+            <div class="cat-desc">化学成分、拉伸力学、金相</div>
+          </div>
+          <div class="cat-card" data-cat="process" onclick="selectCategory('process', this)">
+            <div class="cat-name">🔥 工艺标准</div>
+            <div class="cat-desc">温度、时间、电流等过程参数</div>
+          </div>
+          <div class="cat-card" data-cat="appearance_performance" onclick="selectCategory('appearance_performance', this)">
+            <div class="cat-name">✨ 外观/性能标准</div>
+            <div class="cat-desc">缺陷限度、附着力、盐雾耐候</div>
+          </div>
+        </div>
       </div>
 
-      <div class="form-row">
-        <label>标准类别：</label>
-        <select id="categorySelect" class="form-control" onchange="refreshPromptPreview()">
-          <option value="">🤖 自动识别 (按标准文本特征路由插件)</option>
-          <option value="tolerance">📐 公差/尺寸标准插件 (tolerance)</option>
-          <option value="material">🧪 材料标准插件 (material)</option>
-          <option value="process">🔥 工艺标准插件 (process)</option>
-          <option value="appearance_performance">✨ 外观/性能标准插件 (appearance_performance)</option>
-        </select>
+      <!-- 第三步：点击按钮提取 -->
+      <div class="step-block" style="margin-top:4px;">
+        <div class="step-title">
+          <span class="step-num">3</span>
+          <span>调用大模型提取控制计划检查项</span>
+        </div>
+        <button class="btn-primary" id="extractBtn" onclick="startExtraction()">
+          🚀 开始提取检查项
+        </button>
+        <div id="statusMsg" style="font-size:12px; color:var(--muted); text-align:center; min-height:18px;"></div>
       </div>
 
-      <div class="tabs">
-        <button class="tab-btn active" id="leftTabSrc" onclick="switchLeftTab('src')">📄 标准原文编辑</button>
-        <button class="tab-btn" id="leftTabPrompt" onclick="switchLeftTab('prompt')">🧩 组装提示词预览 (Base+Plugin)</button>
-      </div>
-
-      <textarea id="sourceEditor" class="editor" placeholder="在此粘贴或上传汽车技术标准文本..."></textarea>
-      <textarea id="promptPreview" class="editor" style="display:none; background:#f8fafc;" readonly></textarea>
-
-      <button class="btn-primary" id="extractBtn" onclick="runExtraction()">
-        🚀 执行检查项提取与质量门禁校验
-      </button>
     </div>
   </div>
 
-  <!-- 右侧：结果、人工门禁与导出 -->
+  <!-- 右侧：提取结果展示与导出 -->
   <div class="panel">
     <div class="panel-header">
       <div>
-        <span>2. 控制计划检查项与质量门禁工作台</span>
+        <span>提取结果与质量门禁审核</span>
         <span id="engineUsedBadge" class="badge badge-med" style="margin-left:8px; display:none;"></span>
       </div>
       <div style="display:flex; gap:8px;" id="exportBar"></div>
@@ -407,7 +554,7 @@
     <div class="panel-body">
       <div class="kpi-grid">
         <div class="kpi-card">
-          <div class="label">识别标准类别</div>
+          <div class="label">标准类别</div>
           <div class="val" id="kpiCategory" style="font-size:15px;">-</div>
         </div>
         <div class="kpi-card">
@@ -419,7 +566,7 @@
           <div class="val" id="kpiValid" style="color:var(--success);">0</div>
         </div>
         <div class="kpi-card warn">
-          <div class="label">门禁拦截待复核</div>
+          <div class="label">需人工确认项</div>
           <div class="val" id="kpiPending">0</div>
         </div>
         <div class="kpi-card">
@@ -430,13 +577,13 @@
 
       <div class="tabs">
         <button class="tab-btn active" id="rightTabValid" onclick="switchRightTab('valid')">
-          ✅ 正式控制计划清单 (<span id="tabCountValid">0</span>)
+          ✅ 控制计划检查项清单 (<span id="tabCountValid">0</span>)
         </button>
         <button class="tab-btn" id="rightTabPending" onclick="switchRightTab('pending')">
-          ⚠️ 人工确认门禁清单 (<span id="tabCountPending">0</span>)
+          ⚠️ 待人工确认项 (<span id="tabCountPending">0</span>)
         </button>
         <button class="tab-btn" id="rightTabReport" onclick="switchRightTab('report')">
-          🛡️ 后处理校验报告 & JSON
+          🛡️ 校验报告 & JSON
         </button>
       </div>
 
@@ -451,13 +598,17 @@
               <th>规范 / 公差</th>
               <th>检查 / 试验方法</th>
               <th>判定准则</th>
-              <th>条款</th>
+              <th>条款号</th>
               <th>原文引用摘录 (溯源)</th>
               <th>置信度</th>
             </tr>
           </thead>
           <tbody id="validTableBody">
-            <tr><td colspan="9" style="text-align:center; padding:40px; color:var(--muted);">点击左侧「执行检查项提取与质量门禁校验」查看结果</td></tr>
+            <tr>
+              <td colspan="9" style="text-align:center; padding:60px 20px; color:var(--muted);">
+                请在左侧 <b>① 上传 PDF/Word 标准文档</b> &rarr; <b>② 选择文档所属类别</b> &rarr; <b>③ 点击「开始提取检查项」</b>
+              </td>
+            </tr>
           </tbody>
         </table>
       </div>
@@ -481,7 +632,7 @@
   <div class="modal">
     <h3>⚡ DeepSeek 大模型 API 配置</h3>
     <p style="font-size:12px; color:var(--muted); margin-bottom:12px;">
-      支持 DeepSeek 官方 API (<code>https://api.deepseek.com</code>) 或任何兼容 OpenAI 协议的私有化端点。也可在项目根目录 <code>.env</code> 文件中持久化配置。
+      配置一次即可自动保存在浏览器本地，也可写入项目根目录下的 <code>.env</code> 文件。
     </p>
     <div class="field">
       <label>DeepSeek API Key <span id="envKeyHint" style="color:var(--success);"></span></label>
@@ -494,23 +645,104 @@
     <div class="field">
       <label>模型名称 (Model)</label>
       <select id="dsModel" class="form-control">
-        <option value="deepseek-chat">deepseek-chat (DeepSeek-V3 推荐，支持严格 JSON 模式)</option>
-        <option value="deepseek-reasoner">deepseek-reasoner (DeepSeek-R1 深度推理模型)</option>
+        <option value="deepseek-chat">deepseek-chat (DeepSeek-V3，推荐)</option>
+        <option value="deepseek-reasoner">deepseek-reasoner (DeepSeek-R1 深度推理)</option>
       </select>
     </div>
-    <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:16px;">
-      <button class="chip-btn" onclick="closeModal()">取消</button>
-      <button class="btn-primary" style="padding:6px 16px;" onclick="saveDsConfig()">保存配置</button>
+    <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; margin-top:16px;">
+      <button class="btn-sm" style="background:#fef2f2; color:#dc2626;" onclick="clearLocalDsKey()">清除浏览器缓存 Key (使用 .env)</button>
+      <div style="display:flex; gap:8px;">
+        <button class="btn-sm" style="background:#f1f5f9;" onclick="closeModal()">取消</button>
+        <button class="btn-primary" style="width:auto; padding:6px 18px; font-size:13px;" onclick="saveDsConfig()">保存配置</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- 提示词与人工确认判定标准配置弹窗 -->
+<div class="modal-backdrop" id="promptModal">
+  <div class="modal modal-lg">
+    <div class="prompt-modal-header">
+      <div>
+        <h3 style="margin:0; font-size:16px;">📝 提示词与「待人工确认」判定标准配置</h3>
+        <div style="font-size:12px; color:var(--muted); margin-top:2px;">
+          直接编辑并保存底层 Markdown 模板（<code>templates/</code>），实时调整大模型对「需人工确认 / 置信度」的判定松紧度。
+        </div>
+      </div>
+      <button class="btn-sm" style="background:#e2e8f0; color:#334155;" onclick="closePromptModal()">✖ 关闭</button>
+    </div>
+
+    <div class="prompt-modal-body">
+      <!-- 左侧模板切换导航 -->
+      <div class="tpl-sidebar" id="tplSidebar"></div>
+
+      <!-- 右侧模板编辑区 -->
+      <div class="tpl-editor-pane">
+        <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:8px;">
+          <div>
+            <div style="font-weight:600; font-size:14px; color:#0f172a;" id="tplEditorTitle">加载中...</div>
+            <div style="font-size:12px; color:var(--muted);" id="tplEditorDesc"></div>
+          </div>
+          <span class="badge" id="tplFileBadge" style="background:#f1f5f9; color:#475569; font-family:monospace;"></span>
+        </div>
+
+        <!-- 快捷规则注入栏 -->
+        <div>
+          <div style="font-size:11.5px; font-weight:600; color:#475569; margin-bottom:5px;">
+            ⚡ 快捷追加「待人工确认 / 置信度」判定规则（点击即可插入到编辑器末尾）：
+          </div>
+          <div class="preset-bar">
+            <button type="button" class="preset-chip" onclick="insertPresetRule('loose_gauge')">
+              🟢 宽松：常规尺寸/外观未注明量具时，允许自动推导通用量具（如卡尺/目视）且不触发人工确认
+            </button>
+            <button type="button" class="preset-chip" onclick="insertPresetRule('strict_method')">
+              🟠 严格：凡标准原文未明确指定检验/试验方法，一律将 confidence 设为"低"且 needs_human_review=true
+            </button>
+            <button type="button" class="preset-chip" onclick="insertPresetRule('ignore_advisory')">
+              🔵 过滤建议项：凡带有"宜、可、建议、参考"的条款一律忽略不提取
+            </button>
+            <button type="button" class="preset-chip" onclick="insertPresetRule('review_advisory')">
+              🟣 拦截建议项：带有"宜、参考、协商"的条款需提取，但强制标记 needs_human_review=true
+            </button>
+          </div>
+        </div>
+
+        <textarea id="tplTextarea" class="prompt-textarea" placeholder="在此输入提示词模板内容..."></textarea>
+
+        <!-- 完整组装预览折叠区 -->
+        <div style="border-top:1px dashed var(--border); padding-top:8px;">
+          <div style="display:flex; justify-content:space-between; align-items:center;">
+            <button type="button" class="btn-sm" style="background:#f1f5f9; color:#334155;" onclick="toggleAssembledPreview()">
+              👁️ 预览完整组装提示词 (公共基础模板 + 当前类别插件 + JSON Schema)
+            </button>
+            <span id="tplSaveStatus" style="font-size:12px; font-weight:600; color:var(--success);"></span>
+          </div>
+          <pre id="assembledPreviewBox" style="display:none; margin-top:8px; max-height:160px; overflow:auto; font-size:11.5px; background:#0f172a; color:#e2e8f0; padding:10px; border-radius:6px; white-space:pre-wrap;"></pre>
+        </div>
+      </div>
+    </div>
+
+    <div class="prompt-modal-footer">
+      <button type="button" class="btn-sm" style="background:#fef2f2; color:#dc2626;" onclick="resetCurrentTemplate()">
+        🔄 恢复当前模板出厂默认
+      </button>
+      <div style="display:flex; gap:8px;">
+        <button type="button" class="btn-sm" style="background:#e2e8f0; color:#334155;" onclick="closePromptModal()">取消</button>
+        <button type="button" class="btn-primary" style="width:auto; padding:7px 20px; font-size:13.5px;" onclick="saveCurrentTemplate()">
+          💾 保存修改并立即生效
+        </button>
+      </div>
     </div>
   </div>
 </div>
 
 <script>
+  let selectedFile = null;
+  let selectedCategory = 'tolerance';
   let currentPackage = null;
   let serverHasEnvKey = false;
 
   async function initApp() {
-    // 读取本地存储的 DeepSeek 配置
     document.getElementById('dsApiKey').value = localStorage.getItem('ds_api_key') || '';
     if (localStorage.getItem('ds_base_url')) {
       document.getElementById('dsBaseUrl').value = localStorage.getItem('ds_base_url');
@@ -527,24 +759,65 @@
     }
     updateDsStatusIndicator();
 
-    // 加载样本按钮
-    const sResp = await fetch('/api/samples');
-    const samples = await sResp.json();
-    const bar = document.getElementById('sampleBar');
-    bar.innerHTML = '';
-    samples.forEach((s, idx) => {
-      const btn = document.createElement('button');
-      btn.className = 'chip-btn' + (idx === 0 ? ' active' : '');
-      btn.textContent = s.badge;
-      btn.title = s.title;
-      btn.onclick = () => loadSample(s.file_name, btn);
-      bar.appendChild(btn);
+    // 支持拖拽上传
+    const dz = document.getElementById('dropzone');
+    dz.addEventListener('dragover', e => { e.preventDefault(); dz.classList.add('dragover'); });
+    dz.addEventListener('dragleave', () => dz.classList.remove('dragover'));
+    dz.addEventListener('drop', e => {
+      e.preventDefault();
+      dz.classList.remove('dragover');
+      if (e.dataTransfer.files && e.dataTransfer.files[0]) {
+        setFile(e.dataTransfer.files[0]);
+      }
     });
 
-    if (samples.length > 0) {
-      await loadSample(samples[0].file_name, bar.firstChild);
-      await runExtraction();
+    // 支持直接按 Cmd+V / Ctrl+V 粘贴剪贴板中的标准截图
+    window.addEventListener('paste', e => {
+      const items = (e.clipboardData || window.clipboardData)?.items;
+      if (!items) return;
+      for (const item of items) {
+        if (item.type && item.type.startsWith('image/')) {
+          const blob = item.getAsFile();
+          if (blob) {
+            const ext = blob.type.split('/')[1] || 'png';
+            const file = new File([blob], `pasted_screenshot_${Date.now()}.${ext}`, { type: blob.type });
+            setFile(file);
+            break;
+          }
+        }
+      }
+    });
+  }
+
+  function onFileSelected(ev) {
+    if (ev.target.files && ev.target.files[0]) {
+      setFile(ev.target.files[0]);
     }
+  }
+
+  function setFile(file) {
+    selectedFile = file;
+    const dz = document.getElementById('dropzone');
+    dz.classList.add('has-file');
+    const isImg = (file.type && file.type.startsWith('image/')) || /\.(png|jpe?g|webp|bmp|tiff?|heic)$/i.test(file.name);
+    document.getElementById('dzIcon').textContent = isImg ? '🖼️' : '✅';
+    document.getElementById('dzTitle').textContent = file.name;
+    document.getElementById('dzSub').textContent = `${isImg ? '截图/图片 OCR 模式 · ' : ''}${(file.size / 1024).toFixed(1)} KB（点击重选或直接按 Cmd+V 粘贴新截图）`;
+
+    const previewImg = document.getElementById('dzPreviewImg');
+    if (isImg) {
+      previewImg.src = URL.createObjectURL(file);
+      previewImg.style.display = 'inline-block';
+    } else {
+      previewImg.style.display = 'none';
+      previewImg.src = '';
+    }
+  }
+
+  function selectCategory(cat, el) {
+    selectedCategory = cat;
+    document.querySelectorAll('#catGrid .cat-card').forEach(c => c.classList.remove('selected'));
+    el.classList.add('selected');
   }
 
   function updateDsStatusIndicator() {
@@ -557,55 +830,58 @@
     }
   }
 
-  async function loadSample(sampleName, btnEl) {
-    document.querySelectorAll('#sampleBar .chip-btn').forEach(b => b.classList.remove('active'));
-    if (btnEl) btnEl.classList.add('active');
-
-    const resp = await fetch(`/api/samples/${sampleName}`);
-    const data = await resp.json();
-    document.getElementById('fileNameInput').value = data.file_name;
-    document.getElementById('sourceEditor').value = data.content;
-    await refreshPromptPreview();
-  }
-
-  async function handleUpload(ev) {
-    const file = ev.target.files[0];
-    if (!file) return;
-    const formData = new FormData();
-    formData.append('file', file);
-    const resp = await fetch('/api/upload', { method: 'POST', body: formData });
-    if (!resp.ok) {
-      const err = await resp.json();
-      alert('文件解析失败: ' + err.detail);
+  async function startExtraction() {
+    if (!selectedFile) {
+      alert('请先在第一步上传 PDF / Word / Markdown 标准文档！');
       return;
     }
-    const data = await resp.json();
-    document.getElementById('fileNameInput').value = data.file_name;
-    document.getElementById('sourceEditor').value = data.content;
-    await refreshPromptPreview();
-  }
 
-  async function refreshPromptPreview() {
-    const content = document.getElementById('sourceEditor').value;
-    const manual_category = document.getElementById('categorySelect').value || null;
-    if (!content.trim()) return;
-    const resp = await fetch('/api/preview-prompt', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ content, manual_category })
-    });
-    if (resp.ok) {
-      const data = await resp.json();
-      document.getElementById('promptPreview').value = data.prompt;
+    const localKey = (document.getElementById('dsApiKey').value || '').trim();
+    if (!localKey && !serverHasEnvKey) {
+      openModal();
+      alert('请先填入你的 DeepSeek API Key！');
+      return;
     }
-  }
 
-  function switchLeftTab(tab) {
-    document.getElementById('leftTabSrc').classList.toggle('active', tab === 'src');
-    document.getElementById('leftTabPrompt').classList.toggle('active', tab === 'prompt');
-    document.getElementById('sourceEditor').style.display = tab === 'src' ? 'block' : 'none';
-    document.getElementById('promptPreview').style.display = tab === 'prompt' ? 'block' : 'none';
-    if (tab === 'prompt') refreshPromptPreview();
+    const btn = document.getElementById('extractBtn');
+    const msg = document.getElementById('statusMsg');
+    btn.disabled = true;
+    btn.textContent = '⏳ DeepSeek 正在阅读标准并提取检查项...';
+    msg.textContent = '正在解析文档并调用 DeepSeek 大模型（约需 5~20 秒，请稍候）...';
+
+    try {
+      const formData = new FormData();
+      formData.append('file', selectedFile);
+      formData.append('category', selectedCategory);
+      if (localKey) formData.append('deepseek_api_key', localKey);
+      formData.append('deepseek_base_url', document.getElementById('dsBaseUrl').value.trim());
+      formData.append('deepseek_model', document.getElementById('dsModel').value);
+
+      const resp = await fetch('/api/extract-document', {
+        method: 'POST',
+        body: formData
+      });
+
+      const data = await resp.json();
+      if (!resp.ok) {
+        alert('提取失败: ' + (data.detail || '未知错误'));
+        msg.textContent = '提取失败: ' + (data.detail || '');
+        return;
+      }
+
+      const badge = document.getElementById('engineUsedBadge');
+      badge.style.display = 'inline-block';
+      badge.textContent = data.engine_used;
+      msg.textContent = `✅ 提取完成！共解析 ${data.parsed_length} 字符。`;
+
+      renderResult(data.package, data.excel_download_url, data.json_download_url);
+    } catch (err) {
+      alert('请求异常: ' + err);
+      msg.textContent = '请求异常';
+    } finally {
+      btn.disabled = false;
+      btn.textContent = '🚀 开始提取检查项';
+    }
   }
 
   function switchRightTab(tab) {
@@ -613,45 +889,6 @@
       document.getElementById('rightTab' + t.charAt(0).toUpperCase() + t.slice(1)).classList.toggle('active', t === tab);
       document.getElementById('view' + t.charAt(0).toUpperCase() + t.slice(1)).style.display = t === tab ? 'block' : 'none';
     });
-  }
-
-  async function runExtraction() {
-    const btn = document.getElementById('extractBtn');
-    btn.disabled = true;
-    btn.textContent = '⏳ 正在提取并运行质量门禁校验...';
-
-    try {
-      const payload = {
-        file_name: document.getElementById('fileNameInput').value || 'standard.md',
-        content: document.getElementById('sourceEditor').value,
-        manual_category: document.getElementById('categorySelect').value || null,
-        engine_mode: document.getElementById('engineMode').value,
-        deepseek_api_key: document.getElementById('dsApiKey').value || null,
-        deepseek_base_url: document.getElementById('dsBaseUrl').value || null,
-        deepseek_model: document.getElementById('dsModel').value || null,
-      };
-
-      const resp = await fetch('/api/extract', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
-
-      const data = await resp.json();
-      if (!resp.ok) {
-        alert('提取失败: ' + (data.detail || '未知错误'));
-        return;
-      }
-
-      const badge = document.getElementById('engineUsedBadge');
-      badge.style.display = 'inline-block';
-      badge.textContent = '引擎: ' + data.engine_used;
-
-      renderResult(data.package, data.excel_download_url, data.json_download_url);
-    } finally {
-      btn.disabled = false;
-      btn.textContent = '🚀 执行检查项提取与质量门禁校验';
-    }
   }
 
   function renderResult(pkg, excelUrl, jsonUrl) {
@@ -667,16 +904,14 @@
     document.getElementById('tabCountValid').textContent = pkg.check_items.length;
     document.getElementById('tabCountPending').textContent = pkg.pending_review_items.length;
 
-    // 导出按钮栏
     document.getElementById('exportBar').innerHTML = `
       <a class="btn-dl" href="${excelUrl}" download>📥 导出控制计划 Excel (.xlsx)</a>
-      <a class="btn-dl secondary" href="${jsonUrl}" download>📥 导出 JSON 包</a>
+      <a class="btn-dl secondary" href="${jsonUrl}" download>📥 导出 JSON</a>
     `;
 
-    // 渲染正式检查项表
     const tbody = document.getElementById('validTableBody');
     if (pkg.check_items.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="9" style="text-align:center; padding:30px; color:var(--muted);">暂无正式准入检查项</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="9" style="text-align:center; padding:30px; color:var(--muted);">暂无直接准入检查项，请查看「待人工确认项」页签</td></tr>';
     } else {
       tbody.innerHTML = pkg.check_items.map((item, idx) => `
         <tr>
@@ -693,7 +928,6 @@
       `).join('');
     }
 
-    // 渲染人工确认门禁清单
     const pendingBox = document.getElementById('pendingContainer');
     if (pkg.pending_review_items.length === 0) {
       pendingBox.innerHTML = '<div style="text-align:center; padding:30px; color:var(--success); font-weight:600;">🎉 所有检查项均已通过门禁，无待人工确认项！</div>';
@@ -705,12 +939,12 @@
             <span class="badge badge-low">置信度：${item.confidence}</span>
           </h4>
           <p style="font-size:12px; color:#b45309; margin-bottom:8px;">
-            <strong>拦截原因 / 备注：</strong>${escapeHtml(item.notes || '低置信度或触发校验规则，需工程师确认公差与判据')}
+            <strong>拦截原因 / 备注：</strong>${escapeHtml(item.notes || '低置信度或触发校验门禁，请工程师核对')}
           </p>
           <div class="quote-box" style="margin-bottom:10px;">原文引用：${escapeHtml(item.source_quote)}</div>
           <div class="review-grid">
             <div>
-              <label style="font-size:11px; color:var(--muted);">规范 / 公差（可由工程师修订后准入）：</label>
+              <label style="font-size:11px; color:var(--muted);">规范 / 公差：</label>
               <input type="text" class="form-control" id="revSpec_${idx}" value="${escapeHtml(item.specification)}" />
             </div>
             <div>
@@ -724,13 +958,12 @@
           </div>
           <div style="display:flex; gap:8px; justify-content:flex-end;">
             <button class="btn-sm btn-reject" onclick="handleReview(${idx}, 'reject')">✖️ 驳回剔除</button>
-            <button class="btn-sm btn-approve" onclick="handleReview(${idx}, 'approve')">✔️ 工程师确认准入控制计划</button>
+            <button class="btn-sm btn-approve" onclick="handleReview(${idx}, 'approve')">✔️ 确认准入控制计划</button>
           </div>
         </div>
       `).join('');
     }
 
-    // 渲染校验报告与 JSON
     const rep = pkg.validation_report;
     const issues = [
       ...rep.missing_clause_or_quote,
@@ -741,7 +974,7 @@
     document.getElementById('reportSummary').innerHTML = `
       <div style="padding:10px 14px; background:#f8fafc; border:1px solid var(--border); border-radius:8px;">
         <div style="font-weight:600; margin-bottom:6px;">后处理校验结论：</div>
-        ${issues.length === 0 ? '<div style="color:var(--success);">✅ 条款与原文引用 100% 匹配，未发现试验方法与判定准则倒置。</div>' : issues.map(i => `<div style="color:var(--danger);">• ${escapeHtml(i)}</div>`).join('')}
+        ${issues.length === 0 ? '<div style="color:var(--success);">✅ 条款与原文引用全部匹配，未发现异常。</div>' : issues.map(i => `<div style="color:var(--danger);">• ${escapeHtml(i)}</div>`).join('')}
         ${rep.suggestions.map(s => `<div style="color:var(--warning); margin-top:4px;">💡 ${escapeHtml(s)}</div>`).join('')}
       </div>
     `;
@@ -792,12 +1025,194 @@
     localStorage.setItem('ds_api_key', key);
     localStorage.setItem('ds_base_url', url);
     localStorage.setItem('ds_model', model);
-    if (key) {
-      document.getElementById('engineMode').value = 'deepseek';
-    }
     updateDsStatusIndicator();
     closeModal();
   }
+  function clearLocalDsKey() {
+    localStorage.removeItem('ds_api_key');
+    document.getElementById('dsApiKey').value = '';
+    updateDsStatusIndicator();
+    closeModal();
+  }
+
+  // ==================== 提示词与人工确认判定标准配置逻辑 ====================
+  let allTemplates = [];
+  let activeTemplateKey = 'base';
+  let jsonSchemaInstruction = '';
+
+  const PRESET_RULES = {
+    loose_gauge: '\n- 【人工确认宽松规则】当标准条款的数值公差明确，但未显式指定具体测量工具时，允许根据工程常识自动填入通用检查方法（如线性尺寸填"卡尺/千分尺"、外观缺陷填"目视"），并将 confidence 设为"高"、needs_human_review 设为 false。',
+    strict_method: '\n- 【人工确认严格规则】凡标准原文中未明确写出具体检验/试验方法或设备名称的条款，严禁自行假设高置信度，必须将 confidence 设为"低"且 needs_human_review 设为 true，并在 notes 中注明"原文未指定具体检验方法，需工程师确认"。',
+    ignore_advisory: '\n- 【建议性条款过滤规则】凡条款中使用"宜、可、建议、参考、推荐、不做交货判据"等非强制性表述的，一律直接忽略不提取。',
+    review_advisory: '\n- 【建议性条款拦截规则】对于带有"宜、参考、由供需双方协商、不做交货否决判据"的条款，仍需提取为检查项，但必须将 confidence 设为"低"且 needs_human_review 设为 true，交由质量工程师裁定是否纳入控制计划。'
+  };
+
+  async function openPromptModal(preferredKey) {
+    document.getElementById('promptModal').classList.add('open');
+    document.getElementById('tplSaveStatus').textContent = '';
+    await loadTemplatesFromServer(preferredKey || 'base');
+  }
+
+  function closePromptModal() {
+    document.getElementById('promptModal').classList.remove('open');
+  }
+
+  async function loadTemplatesFromServer(selectKey) {
+    const resp = await fetch('/api/templates');
+    if (!resp.ok) {
+      alert('加载提示词模板失败');
+      return;
+    }
+    const data = await resp.json();
+    allTemplates = data.templates || [];
+    jsonSchemaInstruction = data.json_schema_instruction || '';
+
+    const targetKey = allTemplates.some(t => t.key === selectKey) ? selectKey : 'base';
+    selectTemplateTab(targetKey);
+  }
+
+  function renderTemplateSidebar() {
+    const sb = document.getElementById('tplSidebar');
+    sb.innerHTML = allTemplates.map(t => `
+      <button type="button" class="tpl-nav-item ${t.key === activeTemplateKey ? 'active' : ''}" onclick="selectTemplateTab('${t.key}')">
+        <div class="tpl-nav-title">
+          <span>${escapeHtml(t.title)}</span>
+          ${t.is_modified ? '<span class="badge badge-low" style="font-size:10px; padding:1px 5px;">已修改</span>' : ''}
+        </div>
+        <div class="tpl-nav-path">${escapeHtml(t.rel_path)}</div>
+      </button>
+    `).join('');
+  }
+
+  function selectTemplateTab(key) {
+    activeTemplateKey = key;
+    const tpl = allTemplates.find(t => t.key === key);
+    if (!tpl) return;
+    renderTemplateSidebar();
+    document.getElementById('tplEditorTitle').textContent = tpl.title;
+    document.getElementById('tplEditorDesc').textContent = tpl.description;
+    document.getElementById('tplFileBadge').textContent = tpl.rel_path;
+    document.getElementById('tplTextarea').value = tpl.content;
+    document.getElementById('tplSaveStatus').textContent = '';
+    updateAssembledPreview();
+  }
+
+  function insertPresetRule(ruleKey) {
+    const snippet = PRESET_RULES[ruleKey];
+    if (!snippet) return;
+    const ta = document.getElementById('tplTextarea');
+    ta.value = ta.value.trimEnd() + '\n' + snippet.trimStart();
+    ta.scrollTop = ta.scrollHeight;
+    ta.focus();
+    document.getElementById('tplSaveStatus').style.color = 'var(--warning)';
+    document.getElementById('tplSaveStatus').textContent = '● 已插入规则片段，请点击右下角「保存修改」生效';
+    updateAssembledPreview();
+  }
+
+  async function saveCurrentTemplate() {
+    const content = document.getElementById('tplTextarea').value.trim();
+    if (!content) {
+      alert('提示词模板内容不能为空！');
+      return;
+    }
+    const statusEl = document.getElementById('tplSaveStatus');
+    statusEl.style.color = 'var(--muted)';
+    statusEl.textContent = '正在保存...';
+
+    const resp = await fetch(`/api/templates/${activeTemplateKey}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content })
+    });
+    const data = await resp.json();
+    if (!resp.ok) {
+      alert('保存失败: ' + (data.detail || '未知错误'));
+      statusEl.textContent = '';
+      return;
+    }
+
+    const idx = allTemplates.findIndex(t => t.key === activeTemplateKey);
+    if (idx !== -1) {
+      allTemplates[idx].content = data.content;
+      allTemplates[idx].is_modified = data.is_modified;
+    }
+    renderTemplateSidebar();
+    updateAssembledPreview();
+    statusEl.style.color = 'var(--success)';
+    statusEl.textContent = `✅ 已保存至 ${data.rel_path}，下次提取立即生效！`;
+  }
+
+  async function resetCurrentTemplate() {
+    if (!confirm('确定要将当前模板恢复为系统出厂默认提示词吗？')) return;
+    const resp = await fetch(`/api/templates/${activeTemplateKey}/reset`, {
+      method: 'POST'
+    });
+    const data = await resp.json();
+    if (!resp.ok) {
+      alert('恢复默认失败: ' + (data.detail || '未知错误'));
+      return;
+    }
+    const idx = allTemplates.findIndex(t => t.key === activeTemplateKey);
+    if (idx !== -1) {
+      allTemplates[idx].content = data.content;
+      allTemplates[idx].is_modified = data.is_modified;
+    }
+    selectTemplateTab(activeTemplateKey);
+    const statusEl = document.getElementById('tplSaveStatus');
+    statusEl.style.color = 'var(--success)';
+    statusEl.textContent = '🔄 已恢复为出厂默认模板！';
+  }
+
+  function toggleAssembledPreview() {
+    const box = document.getElementById('assembledPreviewBox');
+    const isHidden = box.style.display === 'none';
+    box.style.display = isHidden ? 'block' : 'none';
+    if (isHidden) {
+      updateAssembledPreview();
+    }
+  }
+
+  function updateAssembledPreview() {
+    const box = document.getElementById('assembledPreviewBox');
+    if (box.style.display === 'none') return;
+
+    const currentText = document.getElementById('tplTextarea').value.trim();
+    const baseTpl = activeTemplateKey === 'base'
+      ? currentText
+      : (allTemplates.find(t => t.key === 'base')?.content || '');
+
+    const previewCatKey = activeTemplateKey === 'base' ? selectedCategory : activeTemplateKey;
+    const pluginRaw = activeTemplateKey === previewCatKey
+      ? currentText
+      : (allTemplates.find(t => t.key === previewCatKey)?.content || '');
+
+    // 剥离 YAML frontmatter 预览正文
+    let pluginBody = pluginRaw;
+    if (pluginRaw.startsWith('---')) {
+      const parts = pluginRaw.split('---');
+      if (parts.length >= 3) {
+        pluginBody = parts.slice(2).join('---').trim();
+      }
+    }
+
+    box.textContent = [
+      baseTpl,
+      '',
+      `--- 类别专用指导要求（${previewCatKey}） ---`,
+      pluginBody,
+      '',
+      '--- 待提取的标准原文内容 ---',
+      '[此处在提取时自动填入上传的标准文档正文...]',
+      '',
+      jsonSchemaInstruction
+    ].join('\n');
+  }
+
+  document.addEventListener('input', e => {
+    if (e.target && e.target.id === 'tplTextarea') {
+      updateAssembledPreview();
+    }
+  });
 
   function escapeHtml(str) {
     return String(str || '')
