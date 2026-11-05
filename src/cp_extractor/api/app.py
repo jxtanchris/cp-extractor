@@ -21,6 +21,7 @@ from pydantic import BaseModel, Field
 
 from ..core.classifier import StandardClassifier
 from ..core.extractor import StandardExtractorPipeline
+from ..core.lexicon_db import LexiconDB
 from ..core.llm_client import DeepSeekClient, JSON_SCHEMA_INSTRUCTION
 from ..core.mapper import ControlPlanExcelMapper
 from ..core.parser import DocumentParser
@@ -65,6 +66,25 @@ class ReviewUpdateRequest(BaseModel):
 
 class TemplateUpdateRequest(BaseModel):
     content: str = Field(..., description="更新后的模板 Markdown 内容")
+
+
+class LexiconCreateRequest(BaseModel):
+    category: str = Field(..., description="词库分类: method | unit | criteria")
+    keyword: str = Field(..., description="要添加的词条（支持逗号或换行分隔批量输入）")
+    lang: str = Field(default="zh", description="主词条语种: zh | en | ja | de | all")
+    aliases: str = Field(default="", description="多语言同义词/外文对照（逗号分隔，如 CMM, 三次元測定機）")
+    description: str = Field(default="", description="词条说明备注（可选）")
+
+
+class LexiconUpdateRequest(BaseModel):
+    keyword: str = Field(..., description="修改后的词条名称")
+    lang: Optional[str] = Field(default=None, description="修改后的主词条语种: zh | en | ja | de | all")
+    aliases: Optional[str] = Field(default=None, description="修改后的多语言同义词/外文对照")
+    description: str = Field(default="", description="修改后的词条说明备注")
+
+
+class LexiconResetRequest(BaseModel):
+    category: Optional[str] = Field(default="all", description="要重置的分类: method | unit | criteria | all")
 
 
 SAMPLE_META = {
@@ -297,6 +317,83 @@ def reset_template(template_key: str):
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"恢复默认模板失败: {e}")
+
+
+@app.get("/api/lexicon")
+def get_lexicon():
+    """查询 SQLite 中的量检具、物理单位与判定准则校验词库"""
+    db = LexiconDB()
+    return db.get_full_lexicon_payload()
+
+
+@app.post("/api/lexicon")
+def add_lexicon_keywords(req: LexiconCreateRequest):
+    """新增一个或多个校验词库词条（支持逗号/换行批量添加及多语言同义词对照）"""
+    db = LexiconDB()
+    try:
+        added = db.add_keywords(
+            req.category,
+            req.keyword,
+            description=req.description,
+            lang=req.lang,
+            aliases=req.aliases,
+        )
+        return {
+            "added": added,
+            "lexicon": db.get_full_lexicon_payload(),
+        }
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"添加词条失败: {e}")
+
+
+@app.put("/api/lexicon/{item_id}")
+def update_lexicon_keyword(item_id: int, req: LexiconUpdateRequest):
+    """修改指定 ID 的词条内容、语种、多语言同义词或备注说明"""
+    db = LexiconDB()
+    try:
+        updated = db.update_keyword(
+            item_id,
+            req.keyword,
+            description=req.description,
+            lang=req.lang,
+            aliases=req.aliases,
+        )
+        return {
+            "updated": updated,
+            "lexicon": db.get_full_lexicon_payload(),
+        }
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"更新词条失败: {e}")
+
+
+@app.delete("/api/lexicon/{item_id}")
+def delete_lexicon_keyword(item_id: int):
+    """删除指定 ID 的校验词库词条"""
+    db = LexiconDB()
+    deleted = db.delete_keyword(item_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail=f"词条 ID={item_id} 不存在")
+    return {
+        "deleted_id": item_id,
+        "lexicon": db.get_full_lexicon_payload(),
+    }
+
+
+@app.post("/api/lexicon/reset")
+def reset_lexicon_keywords(req: LexiconResetRequest):
+    """将指定分类或全部 SQLite 词库恢复为出厂默认"""
+    db = LexiconDB()
+    try:
+        payload = db.reset_to_defaults(req.category)
+        return payload
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"恢复默认词库失败: {e}")
 
 
 @app.post("/api/preview-prompt")

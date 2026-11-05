@@ -11,23 +11,46 @@ from ..schemas.models import (
     ExtractionPackage,
     ValidationReport,
 )
+from .lexicon_db import LexiconDB
 
 
 class QualityGateValidator:
-    """质量门禁与后处理规则校验器"""
+    """质量门禁与后处理规则校验器（支持从 SQLite 词库实时读取量检具、单位与判据规则）"""
 
-    # 常见试验方法关键词（用于检测是否误填入判定准则）
+    # 常见试验方法关键词兜底默认值（运行时优先从 SQLite LexiconDB 读取）
     METHOD_KEYWORDS = [
         "试验机", "卡尺", "千分尺", "投影仪", "显微镜", "三坐标", "目视", "盐雾箱",
         "探伤仪", "硬度计", "色差仪", "粗糙度仪", "拉伸试验", "冲击试验", "金相检验"
     ]
 
-    # 常见准则/公差关键词（用于检测是否误填入检查方法，含 ASME Y14.5 / ISO 1101 14类 GD&T 符号与 CTQ 单位）
+    # 常见准则/公差关键词兜底默认值（含 ASME Y14.5 / ISO 1101 14类 GD&T 符号与 CTQ 单位）
     CRITERIA_KEYWORDS = [
         "≥", "≤", ">", "<", "±", "%", "MPa", "mm", "无裂纹", "不得有", "级", "符合",
         "⎯", "⏥", "⌯", "⌭", "⌒", "⌓", "⊥", "∥", "∠", "⌖", "◎", "≡", "↗", "⌕",
         "Ra", "Rz", "HRC", "HV", "HB", "N·m", "Ø", "φ"
     ]
+
+    UNIT_KEYWORDS = [
+        "mm", "cm", "m", "%", "MPa", "GPa", "N", "kg", "℃", "°", "h", "s", "min",
+        "μm", "nm", "±", "°C", "HRC", "HRB", "HV", "HB", "Ra", "Rz", "N·m", "GU",
+        "ppm", "lx", "r/min", "⎯", "⏥", "⌯", "⌭", "⌒", "⌓", "⊥", "∥", "∠", "⌖", "◎", "≡", "↗", "⌕", "Ø", "φ"
+    ]
+
+    def __init__(self, lexicon_db: Optional[LexiconDB] = None):
+        self.lexicon_db = lexicon_db or LexiconDB()
+
+    @staticmethod
+    def _contains_term(text: str, term: str) -> bool:
+        """
+        多语言词条匹配：
+        - 对纯英文字母词条（如 CMM、OES、Visual、Grade）使用单词边界大小写不敏感匹配，避免短词误命中其他英文单词内部；
+        - 对中/日/德短语及数学公差符号使用大小写不敏感子串匹配。
+        """
+        if not text or not term:
+            return False
+        if re.match(r"^[A-Za-z]+$", term):
+            return bool(re.search(rf"\b{re.escape(term)}\b", text, re.IGNORECASE))
+        return term.lower() in text.lower()
 
     # CTQ 规范：匹配带圆括号的参考尺寸，如 (120)、(62)、(Ø62)、（50mm）
     REF_DIM_PATTERN = re.compile(r"^[\(（]\s*[ØφR]?\s*\d+(?:\.\d+)?\s*(?:mm|°|cm)?\s*[\)）]$", re.IGNORECASE)
@@ -108,6 +131,21 @@ class QualityGateValidator:
         valid_items: List[CheckItem] = []
         review_items: List[CheckItem] = []
 
+        # 从 SQLite 词库实时读取最新配置的量检具、物理单位与判定准则关键词
+        try:
+            grouped = self.lexicon_db.get_grouped_keywords()
+        except Exception:
+            grouped = {}
+        method_keywords = grouped.get("method") or self.METHOD_KEYWORDS
+        criteria_keywords = grouped.get("criteria") or self.CRITERIA_KEYWORDS
+        unit_keywords = grouped.get("unit") or self.UNIT_KEYWORDS
+        sorted_units = sorted((u for u in unit_keywords if u), key=len, reverse=True)
+        unit_regex = (
+            re.compile("(" + "|".join(re.escape(u) for u in sorted_units) + ")", re.IGNORECASE)
+            if sorted_units
+            else None
+        )
+
         for idx, item in enumerate(all_candidate_items, start=1):
             item_tag = f"#{idx} [{item.characteristic_name}]"
             needs_review = item.needs_human_review
@@ -147,20 +185,25 @@ class QualityGateValidator:
                     )
                 needs_review = True
 
-            # 3. 语义混淆探测：试验方法误写为判定准则
-            for method_kw in self.METHOD_KEYWORDS:
-                if method_kw in item.acceptance_criteria and not any(c in item.acceptance_criteria for c in self.CRITERIA_KEYWORDS):
+            # 3. 语义混淆探测：试验方法误写为判定准则（基于 SQLite 多语言词库实时校验）
+            for method_kw in method_keywords:
+                if self._contains_term(item.acceptance_criteria, method_kw) and not any(
+                    self._contains_term(item.acceptance_criteria, c) for c in criteria_keywords
+                ):
                     report.method_misclassified_as_criteria.append(
                         f"{item_tag}: 判定准则中包含试验方法关键词 '{method_kw}' 且缺少合格判据特征"
                     )
                     needs_review = True
                     break
 
-            # 4. 单位完整性初筛（数值存在但无单位/判定说明）
+            # 4. 单位完整性初筛（数值存在但无单位/判定说明，基于 SQLite 物理单位与多语言判据词库实时校验）
             if re.search(r"\d", item.specification):
-                # 含有数字时，检查是否有常见单位或公差符号
-                has_unit_or_symbol = bool(re.search(r"(mm|cm|m|%|MPa|GPa|N|kg|℃|°|h|s|min|μm|nm|±|°C|HRC|HV|HB|Ra|Rz|⎯|⏥|⌯|⌭|⌒|⌓|⊥|∥|∠|⌖|◎|≡|↗|⌕)", item.specification, re.IGNORECASE))
-                if not has_unit_or_symbol and not re.search(r"(级|无|不得|表面|ISO\s*2768)", item.specification, re.IGNORECASE):
+                # 含有数字时，检查是否有常见单位、公差符号或多语言等级/符合性判据
+                has_unit_or_symbol = (
+                    (bool(unit_regex.search(item.specification)) if unit_regex else False)
+                    or any(self._contains_term(item.specification, c) for c in criteria_keywords)
+                )
+                if not has_unit_or_symbol and not re.search(r"(级|級|无|不得|表面|ISO\s*2768|JIS|ASTM|DIN)", item.specification, re.IGNORECASE):
                     report.unit_inconsistency.append(
                         f"{item_tag}: 规范数值 '{item.specification}' 缺少明确物理单位或级别说明"
                     )

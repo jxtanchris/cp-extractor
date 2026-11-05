@@ -40,9 +40,12 @@ htmlcov/
 .DS_Store
 Thumbs.db
 
-# Output artifacts
+# Output artifacts & runtime SQLite databases
 output/
 temp/
+data/*.db
+data/*.db-journal
+data/*.db-wal
 
 # Secrets & Environment
 .env

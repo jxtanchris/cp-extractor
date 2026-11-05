@@ -478,6 +478,116 @@
       align-items: center;
       justify-content: space-between;
     }
+
+    /* Lexicon SQLite Manager Styles */
+    .lex-lang-bar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      align-items: center;
+    }
+    .lex-lang-chip {
+      border: 1px solid var(--border);
+      background: #f8fafc;
+      color: #475569;
+      padding: 4px 10px;
+      border-radius: 16px;
+      font-size: 12px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .lex-lang-chip:hover { border-color: #94a3b8; background: #f1f5f9; }
+    .lex-lang-chip.active {
+      background: var(--primary);
+      color: #fff;
+      border-color: var(--primary);
+      font-weight: 600;
+    }
+    .lex-add-bar {
+      display: grid;
+      grid-template-columns: 125px 1fr 1.3fr 1fr auto;
+      gap: 6px;
+      background: #f8fafc;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 10px 12px;
+      align-items: center;
+    }
+    .lex-add-bar.editing {
+      background: #eff6ff;
+      border-color: var(--primary);
+    }
+    .lex-tag-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(255px, 1fr));
+      gap: 8px;
+      max-height: 285px;
+      overflow-y: auto;
+      padding: 4px 2px;
+    }
+    .lex-item-card {
+      border: 1px solid var(--border);
+      border-radius: 7px;
+      padding: 8px 10px;
+      background: #fff;
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+      transition: all 0.15s;
+    }
+    .lex-item-card:hover {
+      border-color: #94a3b8;
+      box-shadow: 0 2px 5px rgba(0,0,0,0.04);
+    }
+    .lex-item-top {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 6px;
+    }
+    .lex-kw {
+      font-weight: 700;
+      font-size: 13.5px;
+      color: #0f172a;
+      font-family: "SFMono-Regular", Consolas, monospace;
+      word-break: break-all;
+    }
+    .lex-alias-wrap {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+    }
+    .lex-alias-pill {
+      background: #f1f5f9;
+      color: #334155;
+      border: 1px solid #e2e8f0;
+      border-radius: 4px;
+      padding: 1px 6px;
+      font-size: 11px;
+      font-family: "SFMono-Regular", Consolas, monospace;
+    }
+    .lex-desc {
+      font-size: 11.5px;
+      color: var(--muted);
+      min-height: 16px;
+    }
+    .lex-actions {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+    .lex-icon-btn {
+      border: none;
+      background: #f1f5f9;
+      color: #475569;
+      border-radius: 4px;
+      padding: 2px 6px;
+      font-size: 11.5px;
+      cursor: pointer;
+    }
+    .lex-icon-btn:hover { background: #e2e8f0; color: #0f172a; }
+    .lex-icon-btn.del:hover { background: #fee2e2; color: var(--danger); }
   </style>
 </head>
 <body>
@@ -488,6 +598,9 @@
     <span class="tag">DeepSeek LLM 驱动</span>
   </div>
   <div class="top-controls">
+    <button class="btn-top" onclick="openLexiconModal()">
+      🗂️ 量检具/单位校验词库
+    </button>
     <button class="btn-top" onclick="openPromptModal()">
       📝 提示词与人工确认标准配置
     </button>
@@ -760,6 +873,93 @@
           💾 保存修改并立即生效
         </button>
       </div>
+    </div>
+  </div>
+</div>
+
+<!-- 量检具/物理单位/判定准则 SQLite 多语言校验词库配置弹窗 -->
+<div class="modal-backdrop" id="lexiconModal">
+  <div class="modal modal-lg" style="width:960px;">
+    <div class="prompt-modal-header">
+      <div>
+        <h3 style="margin:0; font-size:16px;">🗂️ 量检具、物理单位与判定准则多语言校验词库 (SQLite)</h3>
+        <div style="font-size:12px; color:var(--muted); margin-top:2px;">
+          独立存储于 SQLite 数据库（<code id="lexDbPathLabel">data/lexicon.db</code>），支持 <b>🇨🇳中文 / 🇺🇸英文 / 🇯🇵日文 / 🇩🇪德文</b> 多语言同义词对照，实时作用于后处理质量门禁 <code>QualityGateValidator</code>。
+        </div>
+      </div>
+      <button class="btn-sm" style="background:#e2e8f0; color:#334155;" onclick="closeLexiconModal()">✖ 关闭</button>
+    </div>
+
+    <div class="prompt-modal-body">
+      <!-- 左侧词库分类切换导航 -->
+      <div class="tpl-sidebar" id="lexSidebar"></div>
+
+      <!-- 右侧词条管理区 -->
+      <div class="tpl-editor-pane">
+        <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:8px;">
+          <div>
+            <div style="font-weight:600; font-size:14px; color:#0f172a;" id="lexCatTitle">加载中...</div>
+            <div style="font-size:12px; color:var(--muted);" id="lexCatDesc"></div>
+          </div>
+          <input type="text" id="lexSearchInput" class="form-control" style="width:210px; font-size:12px;" placeholder="🔍 搜索中/英/日/德词条或说明..." oninput="renderLexiconItems()" />
+        </div>
+
+        <!-- 语种筛选胶囊栏 -->
+        <div class="lex-lang-bar" id="lexLangBar">
+          <button type="button" class="lex-lang-chip active" data-lang="all_filter" onclick="setLexLangFilter('all_filter')">🌐 全部语种</button>
+          <button type="button" class="lex-lang-chip" data-lang="zh" onclick="setLexLangFilter('zh')">🇨🇳 中文 (ZH)</button>
+          <button type="button" class="lex-lang-chip" data-lang="en" onclick="setLexLangFilter('en')">🇺🇸 English (EN)</button>
+          <button type="button" class="lex-lang-chip" data-lang="ja" onclick="setLexLangFilter('ja')">🇯🇵 日本語 (JA)</button>
+          <button type="button" class="lex-lang-chip" data-lang="de" onclick="setLexLangFilter('de')">🇩🇪 Deutsch (DE)</button>
+          <button type="button" class="lex-lang-chip" data-lang="all" onclick="setLexLangFilter('all')">🔣 通用符号 (ALL)</button>
+        </div>
+
+        <!-- 新增 / 编辑多语言词条栏 -->
+        <div class="lex-add-bar" id="lexFormBar">
+          <select id="lexNewLang" class="form-control" style="font-size:12px; padding:6px 6px;">
+            <option value="zh">🇨🇳 中文 (zh)</option>
+            <option value="en">🇺🇸 英文 (en)</option>
+            <option value="ja">🇯🇵 日文 (ja)</option>
+            <option value="de">🇩🇪 德文 (de)</option>
+            <option value="all">🔣 通用符号 (all)</option>
+          </select>
+          <input type="text" id="lexNewKeyword" class="form-control" placeholder="主词条（如：三坐标 或 CMM）" onkeydown="if(event.key==='Enter') submitLexiconForm()" />
+          <input type="text" id="lexNewAliases" class="form-control" placeholder="🌐 多语言同义词/外文对照（逗号分隔，如：CMM, 三次元測定機, KMG）" onkeydown="if(event.key==='Enter') submitLexiconForm()" />
+          <input type="text" id="lexNewDesc" class="form-control" placeholder="说明备注（可选）" onkeydown="if(event.key==='Enter') submitLexiconForm()" />
+          <div style="display:flex; gap:4px;">
+            <button type="button" id="lexSubmitBtn" class="btn-primary" style="width:auto; padding:7px 12px; font-size:12.5px; white-space:nowrap;" onclick="submitLexiconForm()">
+              ➕ 新增词条
+            </button>
+            <button type="button" id="lexCancelEditBtn" class="btn-sm" style="display:none; background:#e2e8f0; color:#334155; white-space:nowrap;" onclick="cancelLexiconEdit()">
+              取消
+            </button>
+          </div>
+        </div>
+
+        <div style="display:flex; justify-content:space-between; align-items:center; font-size:12px;">
+          <span style="color:var(--muted);">
+            当前筛选显示 <b id="lexCurrentCount">0</b> 组词条，展开多语言同义词后共覆盖 <b id="lexExpandedCount" style="color:var(--primary);">0</b> 个多语种匹配项（点 ✏️ 在上方表单编辑）
+          </span>
+          <span id="lexStatusMsg" style="font-weight:600; color:var(--success);"></span>
+        </div>
+
+        <!-- 词条卡片网格 -->
+        <div class="lex-tag-grid" id="lexItemsGrid"></div>
+      </div>
+    </div>
+
+    <div class="prompt-modal-footer">
+      <div style="display:flex; gap:8px;">
+        <button type="button" class="btn-sm" style="background:#fef2f2; color:#dc2626;" onclick="resetLexiconCategory(false)">
+          🔄 恢复当前分类默认多语言词库
+        </button>
+        <button type="button" class="btn-sm" style="background:#fffbeb; color:#b45309; border:1px solid #fde68a;" onclick="resetLexiconCategory(true)">
+          ⚠️ 重置全部三类词库
+        </button>
+      </div>
+      <button type="button" class="btn-primary" style="width:auto; padding:7px 20px; font-size:13.5px;" onclick="closeLexiconModal()">
+        完成并关闭
+      </button>
     </div>
   </div>
 </div>
@@ -1267,6 +1467,293 @@
       updateAssembledPreview();
     }
   });
+
+  // ==================== SQLite 量检具/单位/判定准则多语言校验词库管理逻辑 ====================
+  let lexiconCategories = [];
+  let activeLexCategory = 'method';
+  let activeLexLangFilter = 'all_filter';
+  let editingLexItemId = null;
+
+  const LANG_BADGE_MAP = {
+    zh: '🇨🇳 ZH',
+    en: '🇺🇸 EN',
+    ja: '🇯🇵 JA',
+    de: '🇩🇪 DE',
+    all: '🔣 通用'
+  };
+
+  async function openLexiconModal(preferredCat) {
+    document.getElementById('lexiconModal').classList.add('open');
+    document.getElementById('lexStatusMsg').textContent = '';
+    document.getElementById('lexSearchInput').value = '';
+    cancelLexiconEdit();
+    await loadLexiconFromServer(preferredCat || activeLexCategory);
+  }
+
+  function closeLexiconModal() {
+    cancelLexiconEdit();
+    document.getElementById('lexiconModal').classList.remove('open');
+  }
+
+  async function loadLexiconFromServer(selectCat) {
+    const resp = await fetch('/api/lexicon');
+    if (!resp.ok) {
+      alert('加载 SQLite 校验词库失败');
+      return;
+    }
+    const data = await resp.json();
+    applyLexiconPayload(data, selectCat);
+  }
+
+  function applyLexiconPayload(data, selectCat) {
+    lexiconCategories = data.categories || [];
+    if (data.db_path) {
+      document.getElementById('lexDbPathLabel').textContent = data.db_path;
+    }
+    const target = lexiconCategories.some(c => c.key === selectCat) ? selectCat : 'method';
+    selectLexiconCategory(target);
+  }
+
+  function renderLexiconSidebar() {
+    const sb = document.getElementById('lexSidebar');
+    sb.innerHTML = lexiconCategories.map(c => `
+      <button type="button" class="tpl-nav-item ${c.key === activeLexCategory ? 'active' : ''}" onclick="selectLexiconCategory('${c.key}')">
+        <div class="tpl-nav-title">
+          <span>${escapeHtml(c.title)}</span>
+          <span class="badge badge-cat" style="font-size:10.5px; padding:1px 6px;" title="主词条 ${c.count} 组 / 多语言展开 ${c.expanded_count || c.count} 项">${c.count} (${c.expanded_count || c.count})</span>
+        </div>
+        <div class="tpl-nav-path">validation_lexicon (${escapeHtml(c.key)})</div>
+      </button>
+    `).join('');
+  }
+
+  function selectLexiconCategory(catKey) {
+    activeLexCategory = catKey;
+    cancelLexiconEdit();
+    const cat = lexiconCategories.find(c => c.key === catKey);
+    if (!cat) return;
+    renderLexiconSidebar();
+    document.getElementById('lexCatTitle').textContent = cat.title;
+    document.getElementById('lexCatDesc').textContent = cat.description;
+    renderLexiconItems();
+  }
+
+  function setLexLangFilter(langKey) {
+    activeLexLangFilter = langKey;
+    document.querySelectorAll('#lexLangBar .lex-lang-chip').forEach(btn => {
+      btn.classList.toggle('active', btn.getAttribute('data-lang') === langKey);
+    });
+    renderLexiconItems();
+  }
+
+  function itemMatchesLanguage(item, langFilter) {
+    if (!langFilter || langFilter === 'all_filter') return true;
+    if (item.lang === langFilter) return true;
+    const combined = `${item.keyword} ${item.aliases || ''}`;
+    if (langFilter === 'ja') {
+      // 匹配日文假名或常见日文汉字词条（如 ノギス, 測定機, 試験, 塩, 顕微鏡, 粗さ, なきこと）
+      return /[\u3040-\u30ff]|測定|試験|顕微鏡|塩|噴霧|硬さ|粗さ|引張|衝撃|栓|塗膜|発光|適合|準拠|相当品|時間/.test(combined);
+    }
+    if (langFilter === 'en') {
+      return /[A-Za-z]{2,}/.test(combined);
+    }
+    if (langFilter === 'de') {
+      return /[äöüÄÖÜß]|Mess|Prüf|versuch|prüfung|gerät|Lehrdorn|Gitterschnitt|Rissfrei|Mindestens|Höchstens|Stufe|Klasse|Entsprechen/i.test(combined);
+    }
+    if (langFilter === 'zh') {
+      return /[\u4e00-\u9fa5]/.test(combined);
+    }
+    return false;
+  }
+
+  function renderLexiconItems() {
+    const cat = lexiconCategories.find(c => c.key === activeLexCategory);
+    const grid = document.getElementById('lexItemsGrid');
+    if (!cat) {
+      grid.innerHTML = '';
+      return;
+    }
+    const q = (document.getElementById('lexSearchInput').value || '').trim().toLowerCase();
+    const filtered = cat.items.filter(item => {
+      if (!itemMatchesLanguage(item, activeLexLangFilter)) return false;
+      if (!q) return true;
+      return (
+        item.keyword.toLowerCase().includes(q) ||
+        (item.aliases || '').toLowerCase().includes(q) ||
+        (item.description || '').toLowerCase().includes(q)
+      );
+    });
+
+    const expandedTotal = filtered.reduce((acc, i) => acc + 1 + (i.alias_list ? i.alias_list.length : 0), 0);
+    document.getElementById('lexCurrentCount').textContent = filtered.length;
+    document.getElementById('lexExpandedCount').textContent = expandedTotal;
+
+    if (filtered.length === 0) {
+      grid.innerHTML = '<div style="grid-column:1/-1; text-align:center; padding:30px; color:var(--muted);">暂无匹配的词条</div>';
+      return;
+    }
+
+    grid.innerHTML = filtered.map(item => {
+      const langBadge = LANG_BADGE_MAP[item.lang] || LANG_BADGE_MAP.zh;
+      const aliases = item.alias_list && item.alias_list.length > 0
+        ? `<div class="lex-alias-wrap" title="多语言同义词/外文对照">${item.alias_list.map(a => `<span class="lex-alias-pill">${escapeHtml(a)}</span>`).join('')}</div>`
+        : '<div style="font-size:11px; color:#94a3b8;">🌐 暂无外文/同义词对照（点 ✏️ 可补充）</div>';
+
+      return `
+        <div class="lex-item-card">
+          <div class="lex-item-top">
+            <div style="display:flex; align-items:center; gap:5px; flex-wrap:wrap;">
+              <span class="badge" style="background:#f1f5f9; color:#334155; font-size:10px; padding:1px 5px;">${langBadge}</span>
+              <span class="lex-kw">${escapeHtml(item.keyword)}</span>
+            </div>
+            <div class="lex-actions">
+              <span class="badge ${item.is_builtin ? 'badge-med' : 'badge-high'}" style="font-size:10px; padding:1px 5px;">
+                ${item.is_builtin ? '默认' : '自定义'}
+              </span>
+              <button type="button" class="lex-icon-btn" title="在顶部表单编辑多语言词条" onclick="startEditLexiconItem(${item.id})">✏️</button>
+              <button type="button" class="lex-icon-btn del" title="删除词条" onclick="deleteLexiconItem(${item.id}, '${escapeHtml(item.keyword)}')">🗑️</button>
+            </div>
+          </div>
+          ${aliases}
+          <div class="lex-desc">${escapeHtml(item.description || '—')}</div>
+        </div>
+      `;
+    }).join('');
+  }
+
+  function startEditLexiconItem(itemId) {
+    const cat = lexiconCategories.find(c => c.key === activeLexCategory);
+    const target = cat?.items.find(i => i.id === itemId);
+    if (!target) return;
+
+    editingLexItemId = itemId;
+    document.getElementById('lexNewLang').value = target.lang || 'zh';
+    document.getElementById('lexNewKeyword').value = target.keyword || '';
+    document.getElementById('lexNewAliases').value = target.aliases || '';
+    document.getElementById('lexNewDesc').value = target.description || '';
+
+    document.getElementById('lexFormBar').classList.add('editing');
+    document.getElementById('lexSubmitBtn').textContent = '💾 保存修改';
+    document.getElementById('lexCancelEditBtn').style.display = 'inline-block';
+    document.getElementById('lexNewAliases').focus();
+
+    const statusEl = document.getElementById('lexStatusMsg');
+    statusEl.style.color = 'var(--primary)';
+    statusEl.textContent = `✏️ 正在编辑词条「${target.keyword}」的多语言对照...`;
+  }
+
+  function cancelLexiconEdit() {
+    editingLexItemId = null;
+    document.getElementById('lexNewLang').value = activeLexCategory === 'unit' ? 'all' : 'zh';
+    document.getElementById('lexNewKeyword').value = '';
+    document.getElementById('lexNewAliases').value = '';
+    document.getElementById('lexNewDesc').value = '';
+    document.getElementById('lexFormBar').classList.remove('editing');
+    document.getElementById('lexSubmitBtn').textContent = '➕ 新增词条';
+    document.getElementById('lexCancelEditBtn').style.display = 'none';
+  }
+
+  async function submitLexiconForm() {
+    const lang = document.getElementById('lexNewLang').value;
+    const kwInput = document.getElementById('lexNewKeyword');
+    const aliasesInput = document.getElementById('lexNewAliases');
+    const descInput = document.getElementById('lexNewDesc');
+
+    const keyword = kwInput.value.trim();
+    const aliases = aliasesInput.value.trim();
+    const description = descInput.value.trim();
+
+    if (!keyword) {
+      alert('请输入主词条内容！');
+      kwInput.focus();
+      return;
+    }
+
+    if (editingLexItemId !== null) {
+      const resp = await fetch(`/api/lexicon/${editingLexItemId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          keyword,
+          lang,
+          aliases,
+          description
+        })
+      });
+      const data = await resp.json();
+      if (!resp.ok) {
+        alert('更新失败: ' + (data.detail || '未知错误'));
+        return;
+      }
+      cancelLexiconEdit();
+      applyLexiconPayload(data.lexicon, activeLexCategory);
+      const statusEl = document.getElementById('lexStatusMsg');
+      statusEl.style.color = 'var(--success)';
+      statusEl.textContent = `✅ 已更新多语言词条「${data.updated.keyword}」`;
+    } else {
+      const resp = await fetch('/api/lexicon', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          category: activeLexCategory,
+          keyword,
+          lang,
+          aliases,
+          description
+        })
+      });
+      const data = await resp.json();
+      if (!resp.ok) {
+        alert('添加失败: ' + (data.detail || '未知错误'));
+        return;
+      }
+      cancelLexiconEdit();
+      applyLexiconPayload(data.lexicon, activeLexCategory);
+      const statusEl = document.getElementById('lexStatusMsg');
+      statusEl.style.color = 'var(--success)';
+      statusEl.textContent = `✅ 已成功写入 SQLite (${data.added.length} 组多语言词条)`;
+    }
+  }
+
+  async function deleteLexiconItem(itemId, kwName) {
+    if (!confirm(`确定要从 SQLite 词库中删除词条「${kwName}」及其多语言对照吗？`)) return;
+    if (editingLexItemId === itemId) cancelLexiconEdit();
+    const resp = await fetch(`/api/lexicon/${itemId}`, {
+      method: 'DELETE'
+    });
+    const data = await resp.json();
+    if (!resp.ok) {
+      alert('删除失败: ' + (data.detail || '未知错误'));
+      return;
+    }
+    applyLexiconPayload(data.lexicon, activeLexCategory);
+    const statusEl = document.getElementById('lexStatusMsg');
+    statusEl.style.color = 'var(--warning)';
+    statusEl.textContent = `🗑️ 已删除词条「${kwName}」`;
+  }
+
+  async function resetLexiconCategory(resetAll) {
+    const msg = resetAll
+      ? '确定要将【全部三类词库】重置为出厂默认多语言状态吗？自定义的词条将被清除。'
+      : '确定要将【当前分类词库】恢复为出厂默认多语言状态吗？';
+    if (!confirm(msg)) return;
+    cancelLexiconEdit();
+
+    const resp = await fetch('/api/lexicon/reset', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ category: resetAll ? 'all' : activeLexCategory })
+    });
+    const data = await resp.json();
+    if (!resp.ok) {
+      alert('恢复默认失败: ' + (data.detail || '未知错误'));
+      return;
+    }
+    applyLexiconPayload(data, activeLexCategory);
+    const statusEl = document.getElementById('lexStatusMsg');
+    statusEl.style.color = 'var(--success)';
+    statusEl.textContent = '🔄 已恢复为出厂默认多语言词库！';
+  }
 
   function escapeHtml(str) {
     return String(str || '')

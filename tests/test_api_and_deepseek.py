@@ -144,3 +144,85 @@ def test_template_management_endpoints():
     finally:
         # 确保测试后模板保持原始状态
         client.put("/api/templates/base", json={"content": original_content})
+
+
+def test_sqlite_lexicon_crud_and_validator_integration():
+    """测试 SQLite 量检具/单位/判定准则词库 CRUD 接口及 QualityGateValidator 动态生效"""
+    from src.cp_extractor.schemas.models import (
+        CheckItem,
+        CharacteristicCategory,
+        ConfidenceLevel,
+        ExtractionPackage,
+        StandardInfo,
+    )
+    from src.cp_extractor.core.validator import QualityGateValidator
+
+    try:
+        # 1. 查询初始 SQLite 词库（含多语言扩展统计）
+        get_resp = client.get("/api/lexicon")
+        assert get_resp.status_code == 200
+        payload = get_resp.json()
+        assert len(payload["categories"]) == 3
+        assert payload["total_count"] > 30
+        assert payload["total_expanded_terms"] > payload["total_count"]
+
+        # 2. 批量新增带多语言同义词（aliases）的自定义量检具词条
+        add_resp = client.post(
+            "/api/lexicon",
+            json={
+                "category": "method",
+                "keyword": "激光跟踪仪",
+                "lang": "zh",
+                "aliases": "Laser tracker, レーザートラッカー, Lasertracker",
+                "description": "高精度空间与无损测量设备",
+            },
+        )
+        assert add_resp.status_code == 200
+        added = add_resp.json()["added"]
+        assert len(added) == 1
+        laser_id = added[0]["id"]
+        assert "Laser tracker" in added[0]["alias_list"]
+        assert "レーザートラッカー" in added[0]["alias_list"]
+
+        # 3. 验证 QualityGateValidator 实时读取 SQLite 多语言同义词（如日文 'レーザートラッカー'）并拦截方法/判据混淆
+        validator = QualityGateValidator()
+        misused_item = CheckItem(
+            characteristic_name="大型车身骨架尺寸",
+            characteristic_category=CharacteristicCategory.DIMENSION,
+            specification="1500 ± 0.5 mm",
+            inspection_method="待定",
+            acceptance_criteria="レーザートラッカーにて測定のこと",  # 误将日文量检具同义词写入判定准则
+            standard_clause="3.1",
+            source_quote="大型车身骨架尺寸 1500 ± 0.5 mm，レーザートラッカーにて測定のこと",
+            confidence=ConfidenceLevel.HIGH,
+            needs_human_review=False,
+        )
+        pkg = ExtractionPackage(
+            standard_info=StandardInfo(file_name="body_frame.pdf", standard_category="公差/尺寸标准"),
+            check_items=[misused_item],
+        )
+        validated_pkg = validator.validate_package(pkg)
+        assert len(validated_pkg.pending_review_items) == 1
+        assert any("レーザートラッカー" in msg for msg in validated_pkg.validation_report.method_misclassified_as_criteria)
+
+        # 4. 修改词条多语言对照与说明
+        upd_resp = client.put(
+            f"/api/lexicon/{laser_id}",
+            json={
+                "keyword": "激光跟踪仪",
+                "lang": "zh",
+                "aliases": "Laser tracker, レーザートラッカー",
+                "description": "更新后的设备说明",
+            },
+        )
+        assert upd_resp.status_code == 200
+        assert upd_resp.json()["updated"]["description"] == "更新后的设备说明"
+
+        # 5. 删除词条
+        del_resp = client.delete(f"/api/lexicon/{laser_id}")
+        assert del_resp.status_code == 200
+        assert del_resp.json()["deleted_id"] == laser_id
+    finally:
+        # 6. 恢复默认词库
+        reset_resp = client.post("/api/lexicon/reset", json={"category": "all"})
+        assert reset_resp.status_code == 200
