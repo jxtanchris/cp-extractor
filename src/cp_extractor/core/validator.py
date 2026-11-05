@@ -35,6 +35,58 @@ class QualityGateValidator:
     # CTQ 规范：匹配单边公差写法，如 +0.05/-0.00、+0.1/0、0/-0.02
     UNILATERAL_TOL_PATTERN = re.compile(r"[+-]?\d+(?:\.\d+)?\s*/\s*[+-]?\d+(?:\.\d+)?")
 
+    # 匹配 PDF 解析时注入的页码标记：<!-- 第 1 页 --> 或 <!-- 第 2 页 (OCR) -->
+    PAGE_MARKER_PATTERN = re.compile(r"<!--\s*第\s*(\d+)\s*页[^>]*-->")
+
+    @classmethod
+    def resolve_source_page(
+        cls,
+        source_full_text: str,
+        source_quote: str,
+        standard_clause: str,
+    ) -> Optional[int]:
+        """
+        根据原文中的 `<!-- 第 X 页 -->` 分页标记，精确定位某条检查项所在的 PDF 页码：
+        1. 优先对每个分页块去空白后匹配 `source_quote`；
+        2. 若未命中，退而匹配 `standard_clause` 章节号（如 `3.1`）；
+        3. 若全文仅有 1 页或无分页标记但确属 PDF，默认返回 None 或對應页码。
+        """
+        if not source_full_text:
+            return None
+
+        markers = list(cls.PAGE_MARKER_PATTERN.finditer(source_full_text))
+        if not markers:
+            return None
+
+        # 切分出每一页的 (page_num, page_text)
+        pages: List[tuple[int, str]] = []
+        for i, m in enumerate(markers):
+            page_num = int(m.group(1))
+            start_pos = m.end()
+            end_pos = markers[i + 1].start() if i + 1 < len(markers) else len(source_full_text)
+            pages.append((page_num, source_full_text[start_pos:end_pos]))
+
+        clean_quote = re.sub(r"\s+", "", source_quote or "")
+        if len(clean_quote) >= 4:
+            for page_num, page_txt in pages:
+                if clean_quote in re.sub(r"\s+", "", page_txt):
+                    return page_num
+            # 若完整引用跨行或带表头符号，尝试用前 15 个非空字符匹配
+            short_quote = clean_quote[:15]
+            if len(short_quote) >= 4:
+                for page_num, page_txt in pages:
+                    if short_quote in re.sub(r"\s+", "", page_txt):
+                        return page_num
+
+        clause = (standard_clause or "").strip()
+        if clause and clause not in ("-", "无", "N/A"):
+            clause_pattern = re.compile(rf"(?m)(?:^|\s){re.escape(clause)}(?:\b|\s)")
+            for page_num, page_txt in pages:
+                if clause_pattern.search(page_txt):
+                    return page_num
+
+        return pages[0][0] if pages else None
+
     def validate_package(
         self,
         package: ExtractionPackage,
@@ -59,6 +111,14 @@ class QualityGateValidator:
         for idx, item in enumerate(all_candidate_items, start=1):
             item_tag = f"#{idx} [{item.characteristic_name}]"
             needs_review = item.needs_human_review
+
+            # 0. 自动解析并回填 PDF 页码（若原文包含 <!-- 第 X 页 --> 标记）
+            if source_full_text:
+                resolved_page = self.resolve_source_page(
+                    source_full_text, item.source_quote, item.standard_clause
+                )
+                if resolved_page is not None:
+                    item.source_page = resolved_page
 
             # 1. 溯源校验：标准条款和原文引用
             if not item.standard_clause or item.standard_clause.strip() in ["-", "无", "N/A"]:

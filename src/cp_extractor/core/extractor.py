@@ -24,20 +24,109 @@ from .validator import QualityGateValidator
 class StandardExtractorPipeline:
     """标准→控制计划检查项提取全链路引擎"""
 
+    # 长文档按章节/条款自动分块的阈值（字符数），避免单次输出超长导致漏提或合并
+    DEFAULT_CHUNK_CHAR_LIMIT = 3500
+
     def __init__(
         self,
         templates_dir: Optional[Path] = None,
         llm_callable: Optional[Callable[[str], str]] = None,
+        llm_refiner: Optional[Callable[[str, List[dict], List[str], str], List[dict]]] = None,
+        chunk_char_limit: int = DEFAULT_CHUNK_CHAR_LIMIT,
     ):
         self.classifier = StandardClassifier()
         self.prompt_builder = PromptBuilder(templates_dir=templates_dir)
         self.validator = QualityGateValidator()
         self.llm_callable = llm_callable
+        # 若传入的 llm_callable 是 DeepSeekClient.extract_check_items_json 绑定方法，自动挂载其 refine_items_with_feedback
+        if llm_refiner is not None:
+            self.llm_refiner = llm_refiner
+        elif hasattr(llm_callable, "__self__") and hasattr(llm_callable.__self__, "refine_items_with_feedback"):
+            self.llm_refiner = llm_callable.__self__.refine_items_with_feedback
+        else:
+            self.llm_refiner = None
+        self.chunk_char_limit = chunk_char_limit
 
     def count_clauses(self, text: str) -> int:
         """统计标准文档中的条款编号数量（如 3.1, 4.2 等）"""
         matches = re.findall(r"(?m)^\s*\d+\.\d+\b", text)
         return len(matches)
+
+    @staticmethod
+    def split_document_into_chunks(content: str, max_chars: int = DEFAULT_CHUNK_CHAR_LIMIT) -> List[str]:
+        """
+        按章节标题（`## `）或主条款边界对长标准文档进行语义分块，同时保留顶部文档标题上下文，
+        确保大型多章节标准文档或大表格不会因单次请求过长而被 LLM 漏提或过度合并。
+        """
+        stripped = content.strip()
+        if len(stripped) <= max_chars:
+            return [stripped]
+
+        # 提取文档首部标题区（第一个二级标题或主条款之前的内容）作为公共上下文前缀
+        header_match = re.search(r"(?m)^(?:##+\s+|\d+\.\s+\S|\d+\.\d+\s+)", stripped)
+        doc_header = ""
+        body = stripped
+        if header_match and 0 < header_match.start() <= 400:
+            doc_header = stripped[: header_match.start()].strip()
+            body = stripped[header_match.start() :].strip()
+
+        # 优先按 Markdown 二级/三级标题或顶层章节号切分段落块
+        raw_sections = re.split(r"(?m)(?=^(?:##+\s+|\d+\.\d+\b))", body)
+        sections = [s.strip() for s in raw_sections if s.strip()]
+        if len(sections) <= 1:
+            sections = [p.strip() for p in re.split(r"\n{2,}", body) if p.strip()]
+
+        page_marker_re = re.compile(r"<!--\s*第\s*(\d+)\s*页[^>]*-->")
+        chunks: List[str] = []
+        current_parts: List[str] = []
+        current_len = 0
+        last_page_num: Optional[str] = None
+
+        # 检查 doc_header 中是否有页码标记
+        if doc_header:
+            header_pages = page_marker_re.findall(doc_header)
+            if header_pages:
+                last_page_num = header_pages[-1]
+
+        for sec in sections:
+            sec_len = len(sec)
+            if current_parts and (current_len + sec_len + 2 > max_chars):
+                chunk_body = "\n\n".join(current_parts)
+                chunks.append(f"{doc_header}\n\n{chunk_body}".strip() if doc_header else chunk_body)
+                # 更新截止当前块末尾的最新页码，若下一块开头没有页码标记则自动承接
+                found_pages = page_marker_re.findall(chunk_body)
+                if found_pages:
+                    last_page_num = found_pages[-1]
+                if last_page_num and not page_marker_re.search(sec[:60]):
+                    sec = f"<!-- 第 {last_page_num} 页 -->\n{sec}"
+                    sec_len = len(sec)
+                current_parts = [sec]
+                current_len = sec_len
+            else:
+                current_parts.append(sec)
+                current_len += sec_len + 2
+
+        if current_parts:
+            chunk_body = "\n\n".join(current_parts)
+            chunks.append(f"{doc_header}\n\n{chunk_body}".strip() if doc_header else chunk_body)
+
+        return chunks if chunks else [stripped]
+
+    @staticmethod
+    def _deduplicate_items(items: List[CheckItem]) -> List[CheckItem]:
+        """跨分块合并时按 (条款号, 特性名称, 规范公差) 去重"""
+        seen = set()
+        unique: List[CheckItem] = []
+        for item in items:
+            key = (
+                item.standard_clause.strip(),
+                item.characteristic_name.strip(),
+                item.specification.strip(),
+            )
+            if key not in seen:
+                seen.add(key)
+                unique.append(item)
+        return unique
 
     def run(
         self,
@@ -45,20 +134,24 @@ class StandardExtractorPipeline:
         content: str,
         manual_category: Optional[str] = None,
     ) -> ExtractionPackage:
-        """运行完整提取、后处理校验与门禁分流流水线"""
+        """运行完整提取、分块聚合、后处理门禁校验与二次自纠错流水线"""
         # 1. 类别识别
         plugin_key, category_enum = self.classifier.classify(content, manual_category=manual_category)
 
-        # 2. 组装提示词（含版本信息读取）
+        # 2. 读取插件版本信息
         meta, _ = self.prompt_builder.get_plugin(plugin_key)
         template_version = f"v{meta.get('version', '1.0')}"
-        full_prompt = self.prompt_builder.build_extraction_prompt(plugin_key, context_text=content)
 
-        # 3. 执行提取（若注入了 LLM 调用器则调用 LLM，否则使用内置结构化基准提取器）
+        # 3. 执行提取（若注入了 LLM 调用器则支持按章节分块调用 LLM，否则使用内置结构化基准提取器）
         if self.llm_callable is not None:
-            raw_response = self.llm_callable(full_prompt)
-            raw_data = json.loads(raw_response)
-            items = [CheckItem.model_validate(item) for item in raw_data]
+            chunks = self.split_document_into_chunks(content, max_chars=self.chunk_char_limit)
+            all_extracted: List[CheckItem] = []
+            for chunk_text in chunks:
+                chunk_prompt = self.prompt_builder.build_extraction_prompt(plugin_key, context_text=chunk_text)
+                raw_response = self.llm_callable(chunk_prompt)
+                raw_data = json.loads(raw_response)
+                all_extracted.extend(CheckItem.model_validate(item) for item in raw_data)
+            items = self._deduplicate_items(all_extracted)
         else:
             items = self._structured_rule_extract(plugin_key, content)
 
@@ -76,6 +169,36 @@ class StandardExtractorPipeline:
 
         # 5. 运行后处理规则校验与人工确认门禁分流
         validated_package = self.validator.validate_package(package, source_full_text=content)
+
+        # 6. 二次语义校验与打回重提闭环 (Self-Correction)：
+        # 当存在硬性提取偏差（原文引用不匹配、单边公差被篡改、试验方法与判定准则混淆）且配有 llm_refiner 时，自动触发一次定向修正
+        hard_errors = (
+            validated_package.validation_report.missing_clause_or_quote
+            + validated_package.validation_report.method_misclassified_as_criteria
+        )
+        if self.llm_refiner is not None and hard_errors and validated_package.pending_review_items:
+            try:
+                val_instruction = self.prompt_builder.get_validation_template()
+                failed_dicts = [
+                    item.model_dump(mode="json") for item in validated_package.pending_review_items
+                ]
+                refined_dicts = self.llm_refiner(
+                    content, failed_dicts, hard_errors, val_instruction
+                )
+                refined_items = [CheckItem.model_validate(d) for d in refined_dicts]
+                merged_items = self._deduplicate_items(validated_package.check_items + refined_items)
+                retry_package = ExtractionPackage(
+                    standard_info=validated_package.standard_info,
+                    check_items=merged_items,
+                    coverage_summary=CoverageSummary(total_clauses_scanned=total_clauses),
+                )
+                validated_package = self.validator.validate_package(
+                    retry_package, source_full_text=content
+                )
+            except Exception:
+                # 若二次修正网络异常或解析失败，安全保留首次门禁拦截结果交由人工复核
+                pass
+
         validated_package.coverage_summary.total_clauses_scanned = total_clauses
         return validated_package
 

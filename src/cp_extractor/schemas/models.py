@@ -39,6 +39,7 @@ class CheckItem(BaseModel):
     inspection_method: str = Field(..., description="检查方法，如卡尺、拉伸试验、目视、盐雾试验")
     acceptance_criteria: str = Field(..., description="判定准则，合格/不合格的明确条件")
     standard_clause: str = Field(..., description="标准条款号或章节号")
+    source_page: Optional[int] = Field(default=None, ge=1, description="标准条款或原文所在的 PDF 页码（从 1 开始）")
     source_quote: str = Field(..., description="原文引用摘录")
     confidence: ConfidenceLevel = Field(..., description="提取置信度：高/中/低")
     needs_human_review: bool = Field(..., description="是否需人工确认")
@@ -57,6 +58,7 @@ class StandardInfo(BaseModel):
     file_name: str = Field(..., description="标准文件名")
     standard_category: str = Field(..., description="标准分类名称或标识")
     template_version: str = Field(default="v1.0", description="所用提取模板版本")
+    source_file_url: Optional[str] = Field(default=None, description="源标准文件（如 PDF）在线预览 URL，供条款超链接跳转")
 
 
 class CoverageSummary(BaseModel):

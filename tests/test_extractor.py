@@ -158,3 +158,122 @@ def test_excel_export(tmp_path: Path):
     export_file = tmp_path / "output_cp.xlsx"
     res_path = mapper.export(package, export_file)
     assert res_path.exists()
+
+
+def test_pdf_table_alignment_and_document_chunking():
+    """测试维度3：PDF 多空格对齐表格转 Markdown 表格，以及长文档按章节分块与去重"""
+    from src.cp_extractor.core.parser import DocumentParser
+    from src.cp_extractor.core.extractor import StandardExtractorPipeline
+
+    # 1. 验证多空格对齐表格自动转换为 Markdown 表格
+    raw_pdf_layout_text = (
+        "4.1 未注线性尺寸公差表\n"
+        "基本尺寸分段(mm)    f(精密级)    m(中等级)    c(粗糙级)\n"
+        ">0.5 ~ 3           ±0.05        ±0.10        ±0.20\n"
+        ">3 ~ 6             ±0.05        ±0.10        ±0.30\n"
+    )
+    formatted = DocumentParser._format_space_aligned_tables(raw_pdf_layout_text)
+    assert "| 基本尺寸分段(mm) | f(精密级) | m(中等级) | c(粗糙级) |" in formatted
+    assert "| --- | --- | --- | --- |" in formatted
+    assert "| >0.5 ~ 3 | ±0.05 | ±0.10 | ±0.20 |" in formatted
+
+    # 2. 验证长文档按章节语义分块并保留顶部标题
+    long_doc = (
+        "# Q/CP 001-2026 汽车齿轮技术标准\n\n"
+        "## 3. 尺寸与形位公差\n" + ("3.1 孔径 Ø16.00 +0.05/-0.00 mm。\n" * 60) + "\n\n"
+        "## 4. 热处理工艺要求\n" + ("4.1 渗碳温度 920 ± 10 ℃。\n" * 60)
+    )
+    chunks = StandardExtractorPipeline.split_document_into_chunks(long_doc, max_chars=1200)
+    assert len(chunks) >= 2
+    for ch in chunks:
+        assert "Q/CP 001-2026" in ch
+
+
+def test_self_correction_refinement_loop():
+    """测试维度2：当 LLM 首次输出存在单边公差改写或引用偏差时，自动触发二次校验修正闭环"""
+    import json
+    from src.cp_extractor.core.extractor import StandardExtractorPipeline
+
+    source_text = "## 3. 尺寸要求\n3.1 主定位孔孔径 D1 必须控制在 Ø16.00 +0.05/-0.00 mm，采用塞规检验。"
+
+    # 模拟首次 LLM 提取犯错：将单边公差 +0.05/-0.00 错误改写为 ±0.05
+    def mock_first_extract(_prompt: str) -> str:
+        return json.dumps([
+            {
+                "standard_clause": "3.1",
+                "source_quote": "主定位孔孔径 D1 必须控制在 Ø16.00 +0.05/-0.00 mm，采用塞规检验。",
+                "characteristic_name": "主定位孔孔径 D1",
+                "characteristic_category": "尺寸",
+                "specification": "Ø16.00 ± 0.05 mm",  # 故意篡改单边公差以触发门禁
+                "inspection_method": "塞规",
+                "acceptance_criteria": "Ø16.00 ± 0.05 mm",
+                "confidence": "高",
+                "needs_human_review": False,
+            }
+        ], ensure_ascii=False)
+
+    # 模拟二次自纠错器收到门禁错误报告后修复为正确的单边公差
+    refine_called = {"count": 0}
+
+    def mock_refiner(src: str, failed_items: list, errors: list, val_tpl: str) -> list:
+        refine_called["count"] += 1
+        assert any("单边公差" in e for e in errors)
+        fixed = dict(failed_items[0])
+        fixed["specification"] = "Ø16.00 +0.05/-0.00 mm"
+        fixed["acceptance_criteria"] = "Ø16.00 ~ Ø16.05 mm"
+        fixed["needs_human_review"] = False
+        fixed["notes"] = None
+        return [fixed]
+
+    pipeline = StandardExtractorPipeline(
+        llm_callable=mock_first_extract,
+        llm_refiner=mock_refiner,
+    )
+    pkg = pipeline.run("test_self_correct.md", source_text, manual_category="tolerance")
+
+    assert refine_called["count"] == 1
+    assert len(pkg.check_items) == 1
+    assert len(pkg.pending_review_items) == 0
+    assert pkg.check_items[0].specification == "Ø16.00 +0.05/-0.00 mm"
+
+
+def test_pdf_clause_page_resolution_and_excel_hyperlink(tmp_path: Path):
+    """测试条款自动定位 PDF 页码（source_page）并在导出的 Excel 中生成 #page=N 超链接"""
+    import openpyxl
+    from src.cp_extractor.core.extractor import StandardExtractorPipeline
+
+    multi_page_pdf_text = (
+        "<!-- 第 1 页 -->\n"
+        "# Q/CP 101-2026 转向节尺寸标准\n"
+        "3.1 主定位孔孔径 D1 必须控制在 Ø16.00 +0.05/-0.00 mm，采用气动量仪或塞规进行 100% 检验。\n\n"
+        "<!-- 第 2 页 -->\n"
+        "3.2 前后安装孔中心距 L1 应为 240.0 ± 0.15 mm，使用三坐标测量机（CMM）按首末件及每班抽检。\n\n"
+        "<!-- 第 3 页 -->\n"
+        "5.3 主销孔相对于基准 A、B、C 的位置度（⌖）在最大实体要求（Ⓜ）下不得大于 Ø0.12 mm，使用专用检具或三坐标测量机检验。"
+    )
+
+    pipeline = StandardExtractorPipeline()
+    pkg = pipeline.run("steering_knuckle.pdf", multi_page_pdf_text, manual_category="tolerance")
+    pkg.standard_info.source_file_url = "/api/source/steering_knuckle_source.pdf"
+
+    page_by_clause = {item.standard_clause: item.source_page for item in pkg.check_items}
+    assert page_by_clause.get("3.1") == 1
+    assert page_by_clause.get("3.2") == 2
+    assert page_by_clause.get("5.3") == 3
+
+    mapper = ControlPlanExcelMapper()
+    excel_file = tmp_path / "linked_cp.xlsx"
+    mapper.export(pkg, excel_file)
+
+    wb = openpyxl.load_workbook(excel_file)
+    ws = wb["控制计划检查项"]
+    # 第 3 行对应条款 3.1 (P.1)，第 4 行对应条款 3.2 (P.2)，第 5 行对应条款 5.3 (P.3)
+    cell_p1 = ws.cell(row=3, column=7)
+    cell_p2 = ws.cell(row=4, column=7)
+    cell_p3 = ws.cell(row=5, column=7)
+    assert "3.1 (P.1)" in str(cell_p1.value)
+    assert cell_p1.hyperlink.target.endswith("/api/source/steering_knuckle_source.pdf#page=1")
+    assert "3.2 (P.2)" in str(cell_p2.value)
+    assert cell_p2.hyperlink.target.endswith("/api/source/steering_knuckle_source.pdf#page=2")
+    assert "5.3 (P.3)" in str(cell_p3.value)
+    assert cell_p3.hyperlink.target.endswith("/api/source/steering_knuckle_source.pdf#page=3")

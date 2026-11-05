@@ -49,8 +49,14 @@ class ControlPlanExcelMapper:
 
         # 1. 渲染正式检查项工作表
         self._write_sheet_headers(ws_items, f"控制计划检查项清单 - {package.standard_info.file_name}")
+        source_url = package.standard_info.source_file_url
         row_idx = 3
         for idx, item in enumerate(package.check_items, start=1):
+            clause_label = (
+                f"{item.standard_clause} (P.{item.source_page})"
+                if item.source_page
+                else item.standard_clause
+            )
             ws_items.append([
                 idx,
                 item.characteristic_name,
@@ -58,13 +64,14 @@ class ControlPlanExcelMapper:
                 item.specification,
                 item.inspection_method,
                 item.acceptance_criteria,
-                item.standard_clause,
+                clause_label,
                 item.source_quote,
                 item.confidence.value,
                 "是" if item.needs_human_review else "否",
                 item.notes or "",
             ])
             self._style_data_row(ws_items, row_idx)
+            self._apply_clause_hyperlink(ws_items, row_idx, source_url, item.source_page)
             row_idx += 1
 
         # 2. 渲染待人工确认工作表
@@ -72,6 +79,11 @@ class ControlPlanExcelMapper:
         self._write_sheet_headers(ws_pending, f"待审核/低置信度清单 - {package.standard_info.file_name}")
         row_idx = 3
         for idx, item in enumerate(package.pending_review_items, start=1):
+            clause_label = (
+                f"{item.standard_clause} (P.{item.source_page})"
+                if item.source_page
+                else item.standard_clause
+            )
             ws_pending.append([
                 idx,
                 item.characteristic_name,
@@ -79,13 +91,14 @@ class ControlPlanExcelMapper:
                 item.specification,
                 item.inspection_method,
                 item.acceptance_criteria,
-                item.standard_clause,
+                clause_label,
                 item.source_quote,
                 item.confidence.value,
                 "是" if item.needs_human_review else "否",
                 item.notes or "",
             ])
             self._style_data_row(ws_pending, row_idx, highlight_warning=True)
+            self._apply_clause_hyperlink(ws_pending, row_idx, source_url, item.source_page)
             row_idx += 1
 
         # 3. 渲染摘要与校验报告工作表
@@ -129,6 +142,16 @@ class ControlPlanExcelMapper:
                 cell.alignment = align_center
             else:
                 cell.alignment = align_left
+
+    def _apply_clause_hyperlink(self, ws, row_idx: int, source_url: str | None, source_page: int | None):
+        """若存在源文件链接（如 PDF），将第 7 列（标准条款号）设置为带 #page=N 锚点的超链接"""
+        if not source_url:
+            return
+        cell = ws.cell(row=row_idx, column=7)
+        page_num = source_page or 1
+        target_link = f"{source_url}#page={page_num}" if source_url.lower().endswith(".pdf") else source_url
+        cell.hyperlink = target_link
+        cell.font = Font(name="微软雅黑", size=10, color="0563C1", underline="single")
 
     def _write_report_sheet(self, ws, package: ExtractionPackage):
         ws.column_dimensions["A"].width = 24

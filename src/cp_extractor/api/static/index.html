@@ -264,6 +264,31 @@
       border-radius: 2px;
     }
 
+    .clause-link {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      color: var(--primary);
+      background: #eff6ff;
+      border: 1px solid #bfdbfe;
+      padding: 2px 8px;
+      border-radius: 5px;
+      font-weight: 600;
+      text-decoration: none;
+      transition: all 0.15s;
+      white-space: nowrap;
+    }
+    .clause-link:hover {
+      background: var(--primary);
+      color: #fff;
+      border-color: var(--primary);
+    }
+    .clause-page-tag {
+      font-size: 10.5px;
+      opacity: 0.85;
+      font-weight: 500;
+    }
+
     .review-card {
       background: var(--warning-bg);
       border: 1px solid #fcd34d;
@@ -877,6 +902,9 @@
       badge.textContent = data.engine_used;
       msg.textContent = `✅ 提取完成！共解析 ${data.parsed_length} 字符。`;
 
+      if (data.source_file_url && data.package && data.package.standard_info) {
+        data.package.standard_info.source_file_url = data.source_file_url;
+      }
       renderResult(data.package, data.excel_download_url, data.json_download_url);
     } catch (err) {
       alert('请求异常: ' + err);
@@ -892,6 +920,28 @@
       document.getElementById('rightTab' + t.charAt(0).toUpperCase() + t.slice(1)).classList.toggle('active', t === tab);
       document.getElementById('view' + t.charAt(0).toUpperCase() + t.slice(1)).style.display = t === tab ? 'block' : 'none';
     });
+  }
+
+  function renderClauseCell(item, pkg) {
+    const clauseText = escapeHtml(item.standard_clause || '-');
+    let srcUrl = pkg?.standard_info?.source_file_url || '';
+    const fileName = pkg?.standard_info?.file_name || '';
+    const pageNum = item.source_page || 1;
+    const isPdf = srcUrl.toLowerCase().endsWith('.pdf') || fileName.toLowerCase().endsWith('.pdf');
+
+    if (!srcUrl && isPdf && fileName) {
+      const stem = fileName.replace(/\.[^.]+$/, '').replace(/[^a-zA-Z0-9_\-\u4e00-\u9fa5]/g, '_') || 'standard';
+      srcUrl = `/api/source/${stem}_source.pdf`;
+    }
+
+    if (srcUrl && isPdf) {
+      const href = `${encodeURI(srcUrl)}#page=${pageNum}`;
+      const pageLabel = item.source_page ? `<span class="clause-page-tag">(P.${item.source_page})</span>` : '';
+      return `<a class="clause-link" href="${href}" target="_blank" title="点击在新标签页打开 PDF 第 ${pageNum} 页">📄 ${clauseText} ${pageLabel} ↗</a>`;
+    } else if (srcUrl) {
+      return `<a class="clause-link" href="${encodeURI(srcUrl)}" target="_blank" title="点击打开源标准文件">📄 ${clauseText} ↗</a>`;
+    }
+    return item.source_page ? `${clauseText} <span style="color:var(--muted); font-size:11px;">(P.${item.source_page})</span>` : clauseText;
   }
 
   function renderResult(pkg, excelUrl, jsonUrl) {
@@ -924,7 +974,7 @@
           <td>${escapeHtml(item.specification)}</td>
           <td>${escapeHtml(item.inspection_method)}</td>
           <td>${escapeHtml(item.acceptance_criteria)}</td>
-          <td style="font-weight:600;">${escapeHtml(item.standard_clause)}</td>
+          <td style="font-weight:600;">${renderClauseCell(item, pkg)}</td>
           <td><div class="quote-box">${escapeHtml(item.source_quote)}</div></td>
           <td><span class="badge ${item.confidence === '高' ? 'badge-high' : (item.confidence === '中' ? 'badge-med' : 'badge-low')}">${item.confidence}</span></td>
         </tr>
@@ -938,7 +988,7 @@
       pendingBox.innerHTML = pkg.pending_review_items.map((item, idx) => `
         <div class="review-card">
           <h4>
-            <span>⚠️ 待审核项 #${idx + 1}：${escapeHtml(item.characteristic_name)}（条款 ${escapeHtml(item.standard_clause)}）</span>
+            <span style="display:flex; align-items:center; gap:6px; flex-wrap:wrap;">⚠️ 待审核项 #${idx + 1}：${escapeHtml(item.characteristic_name)}（条款 ${renderClauseCell(item, pkg)}）</span>
             <span class="badge badge-low">置信度：${item.confidence}</span>
           </h4>
           <p style="font-size:12px; color:#b45309; margin-bottom:8px;">

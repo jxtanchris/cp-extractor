@@ -92,6 +92,15 @@ def _safe_stem(filename: str) -> str:
     return re.sub(r"[^a-zA-Z0-9_\-\u4e00-\u9fa5]", "_", stem) or "standard"
 
 
+def _persist_uploaded_source(filename: str, raw: bytes) -> str:
+    """将用户上传的原始标准文档（如 PDF）持久化到 output/ 目录，返回可直接在浏览器打开并定位页码的 URL"""
+    ext = Path(filename).suffix.lower() or ".pdf"
+    safe_name = f"{_safe_stem(filename)}_source{ext}"
+    source_path = OUTPUT_DIR / safe_name
+    source_path.write_bytes(raw)
+    return f"/api/source/{safe_name}"
+
+
 def _persist_artifacts(package: ExtractionPackage) -> Dict[str, str]:
     stem = _safe_stem(package.standard_info.file_name)
     json_name = f"{stem}_output.json"
@@ -118,7 +127,14 @@ def index():
     html_file = STATIC_DIR / "index.html"
     if not html_file.exists():
         raise HTTPException(status_code=404, detail="前端界面文件未找到")
-    return html_file.read_text(encoding="utf-8")
+    return HTMLResponse(
+        content=html_file.read_text(encoding="utf-8"),
+        headers={
+            "Cache-Control": "no-cache, no-store, must-revalidate",
+            "Pragma": "no-cache",
+            "Expires": "0",
+        },
+    )
 
 
 @app.get("/api/config")
@@ -172,6 +188,7 @@ async def upload_standard(file: UploadFile = File(...)):
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
+    source_file_url = _persist_uploaded_source(file.filename or "uploaded.txt", raw)
     classifier = StandardClassifier()
     key, cat_enum = classifier.classify(content)
     return {
@@ -179,6 +196,7 @@ async def upload_standard(file: UploadFile = File(...)):
         "content": content,
         "detected_key": key,
         "detected_category": cat_enum.value,
+        "source_file_url": source_file_url,
     }
 
 
@@ -211,6 +229,8 @@ async def extract_from_uploaded_document(
             detail="无法从该文件中提取出有效文本（如果是扫描件图片型 PDF，请先经 OCR/MinerU 转换）",
         )
 
+    source_file_url = _persist_uploaded_source(file.filename or "standard.pdf", raw)
+
     ds_client = DeepSeekClient(
         api_key=deepseek_api_key,
         base_url=deepseek_base_url,
@@ -229,11 +249,13 @@ async def extract_from_uploaded_document(
             content=parsed_text,
             manual_category=category if category != "auto" else None,
         )
+        package.standard_info.source_file_url = source_file_url
         downloads = _persist_artifacts(package)
         return {
             "engine_used": f"DeepSeek ({ds_client.model})",
             "parsed_length": len(parsed_text),
             "parsed_preview": parsed_text[:2000],
+            "source_file_url": source_file_url,
             "package": package.model_dump(mode="json"),
             **downloads,
         }
@@ -367,6 +389,22 @@ def approve_or_reject_review_item(req: ReviewUpdateRequest):
         raise
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"审核操作失败: {e}")
+
+
+@app.get("/api/source/{filename}")
+def view_source_file(filename: str):
+    """在线预览上传的源标准文档（如 PDF），使用 inline 模式以支持浏览器直接定位 #page=N 页码"""
+    safe_name = Path(filename).name
+    target = OUTPUT_DIR / safe_name
+    if not target.exists():
+        raise HTTPException(status_code=404, detail=f"源文件不存在: {safe_name}")
+    ext = target.suffix.lower()
+    media_type = "application/pdf" if ext == ".pdf" else None
+    return FileResponse(
+        path=target,
+        media_type=media_type,
+        content_disposition_type="inline",
+    )
 
 
 @app.get("/api/download/{filename}")

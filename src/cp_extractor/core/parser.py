@@ -9,10 +9,12 @@
 """
 
 import io
+import re
 import shutil
 import subprocess
 import tempfile
 from pathlib import Path
+from typing import List
 from pypdf import PdfReader
 import docx
 
@@ -24,7 +26,7 @@ IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tiff", ".tif", "
 
 
 class DocumentParser:
-    """多格式标准文档与截图解析器（内置 OCR 支持）"""
+    """多格式标准文档与截图解析器（内置 OCR 与表格结构还原支持）"""
 
     @staticmethod
     def parse_bytes(filename: str, data: bytes) -> str:
@@ -43,20 +45,75 @@ class DocumentParser:
             )
 
     @staticmethod
+    def _format_space_aligned_tables(text: str) -> str:
+        """
+        将 PDF 布局模式提取出的多空格对齐表格行自动识别并转换为 Markdown 表格 (`| col1 | col2 |`)，
+        确保公差矩阵表与化学成分表的行/列对应关系在送入 LLM 时不丢失。
+        """
+        lines = text.splitlines()
+        output_lines: List[str] = []
+        table_buffer: List[List[str]] = []
+
+        def flush_table() -> None:
+            nonlocal table_buffer
+            if len(table_buffer) >= 2:
+                max_cols = max(len(r) for r in table_buffer)
+                for r_idx, row in enumerate(table_buffer):
+                    padded = row + [""] * (max_cols - len(row))
+                    output_lines.append("| " + " | ".join(padded) + " |")
+                    if r_idx == 0:
+                        output_lines.append("| " + " | ".join(["---"] * max_cols) + " |")
+            else:
+                for row in table_buffer:
+                    output_lines.append("  ".join(row))
+            table_buffer = []
+
+        for line in lines:
+            stripped = line.strip()
+            # 若已经是 Markdown 表格行或章节标题，先刷新缓冲区
+            if stripped.startswith("|") or stripped.startswith("#") or not stripped:
+                if table_buffer:
+                    flush_table()
+                output_lines.append(line)
+                continue
+
+            # 识别以 2 个及以上连续空格或制表符分隔的多列数据行（至少 3 列，或 2 列且含数值/符号）
+            cols = [c.strip() for c in re.split(r"\t+|\s{2,}", stripped) if c.strip()]
+            is_table_row = len(cols) >= 3 or (
+                len(cols) == 2 and bool(re.search(r"[0-9±≤≥~～%Øφ]", stripped))
+            )
+            if is_table_row and not re.match(r"^\d+\.\d+\s+", stripped):
+                table_buffer.append(cols)
+            else:
+                if table_buffer:
+                    flush_table()
+                output_lines.append(line)
+
+        if table_buffer:
+            flush_table()
+
+        return "\n".join(output_lines)
+
+    @staticmethod
     def _parse_pdf(data: bytes) -> str:
         reader = PdfReader(io.BytesIO(data))
         pages = []
         for idx, page in enumerate(reader.pages, start=1):
-            txt = page.extract_text() or ""
+            try:
+                # 优先启用 layout 模式保留 PDF 表格的同行多列空间对齐关系
+                txt = page.extract_text(extraction_mode="layout") or ""
+            except Exception:
+                txt = page.extract_text() or ""
             if txt.strip():
-                pages.append(f"<!-- 第 {idx} 页 -->\n{txt.strip()}")
+                formatted_txt = DocumentParser._format_space_aligned_tables(txt.strip())
+                pages.append(f"<!-- 第 {idx} 页 -->\n{formatted_txt}")
 
         combined = "\n\n".join(pages)
         # 若原生 PDF 提取出的有效字符极少（如扫描版/截图合成 PDF），自动启动 OCR 识别
         if len(combined.strip()) < 20:
             ocr_text = DocumentParser._run_ocr(data, suffix=".pdf")
             if ocr_text.strip():
-                return ocr_text
+                return DocumentParser._format_space_aligned_tables(ocr_text)
         return combined
 
     @staticmethod

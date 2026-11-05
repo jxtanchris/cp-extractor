@@ -14,25 +14,27 @@ from dotenv import load_dotenv
 load_dotenv()
 
 JSON_SCHEMA_INSTRUCTION = """
---- 严格 JSON 输出格式要求 ---
-请严格输出合法的 JSON 对象（不要输出多余的解释文字），结构如下：
+--- 严格 JSON 输出格式要求（顺序锚定防幻觉） ---
+请严格输出合法的 JSON 对象（不要输出多余的解释文字）。
+【生成顺序强约束】：每个检查项对象必须严格按照下方字段顺序生成——先定条款号 (`standard_clause`) 与逐字原文引用 (`source_quote`) 作为事实锚点，再基于该原文推导特性名称、公差规范、检查方法与判定准则，严禁脱离原文编造或篡改单边公差：
 {
   "items": [
     {
+      "standard_clause": "标准条款号（如 3.1）",
+      "source_page": 1,
+      "source_quote": "原文引用（必须逐字摘录标准原文中的关键原句片段，单条控制在80字以内，不得改写符号或数值）",
       "characteristic_name": "特性名称（控制计划术语）",
       "characteristic_category": "尺寸 | 材料 | 工艺参数 | 外观 | 性能（五选一）",
-      "specification": "规范或公差（保留原文数值、单位、判定描述，不得改写）",
-      "inspection_method": "检查/试验方法（如三坐标、拉伸试验机、目视等）",
-      "acceptance_criteria": "判定准则（合格/不合格的明确条件）",
-      "standard_clause": "标准条款号（如 3.1）",
-      "source_quote": "原文引用（必须逐字摘录标准原文中的关键原句片段，单条控制在80字以内）",
+      "specification": "规范或公差（保留原文数值、单位、正负号与GD&T符号，单边公差如+0.05/-0.00严禁改写为±0.05）",
+      "inspection_method": "检查/试验方法（只填量检具、仪器或试验标准，如三坐标、按GB/T 228.1拉伸试验机、目视等）",
+      "acceptance_criteria": "判定准则（只填合格/不合格的明确数值边界或外观状态条件，严禁把试验仪器名称填入此字段）",
       "confidence": "高 | 中 | 低（三选一）",
       "needs_human_review": false,
       "notes": "备注说明（可选，对模糊或存疑项说明原因）"
     }
   ]
 }
-重要防截断约束：若标准文档包含超大型多行多列公差矩阵表，请按特性类别或公差等级聚合提炼（单次输出总条目数控制在 30 条以内），确保 JSON 完整闭合不被截断。
+重要完整性约束：表格中的每一行尺寸分段、每一个化学成分元素必须独立生成一条检查项对象（若原文带有 `<!-- 第 X 页 -->` 标记，请将该页码整数填入 `source_page`，否则填 null），确保 JSON 完整闭合不被截断。
 """
 
 
@@ -71,16 +73,64 @@ class DeepSeekClient:
             )
 
         full_user_prompt = f"{assembled_prompt}\n\n{JSON_SCHEMA_INSTRUCTION}"
+        messages: List[Dict[str, str]] = [
+            {
+                "role": "system",
+                "content": "你是严谨的汽车行业 IATF 16949 质量工程师，专门从技术标准中提取可溯源的控制计划检查项并严格输出 JSON。",
+            },
+            {"role": "user", "content": full_user_prompt},
+        ]
+        content = self._call_chat_completions(messages)
+        items_list = self._parse_items_from_text(content)
+        return json.dumps(items_list, ensure_ascii=False)
+
+    def refine_items_with_feedback(
+        self,
+        source_text: str,
+        failed_items: List[Dict[str, Any]],
+        error_messages: List[str],
+        validation_instruction: str = "",
+    ) -> List[Dict[str, Any]]:
+        """
+        二次语义校验与打回修正闭环 (Self-Correction)：
+        针对未通过确定性质量门禁（如原文引用改写/幻觉、单边公差被篡改为 ±、试验方法与判定准则混淆）的检查项，
+        结合原标准文本和具体错误原因，调用 LLM 进行定向修正。
+        """
+        if not self.api_key or not failed_items:
+            return failed_items
+
+        val_header = validation_instruction.strip() or "请根据标准原文和质量门禁报错信息，逐条修正以下存在问题的检查项。"
+        feedback_prompt = (
+            f"{val_header}\n\n"
+            "--- 质量门禁检测到的具体错误 ---\n"
+            + "\n".join(f"- {msg}" for msg in error_messages)
+            + "\n\n--- 待修正的检查项 JSON ---\n"
+            + json.dumps({"items": failed_items}, ensure_ascii=False, indent=2)
+            + "\n\n--- 标准原文参考 ---\n"
+            + source_text
+            + "\n\n请严格基于标准原文修正上述条目：\n"
+            "1. `source_quote` 必须是标准原文中一字不差的真实子串；\n"
+            "2. 若原文为单边公差（如 `+0.05/-0.00`），`specification` 必须恢复为单边公差，严禁写成 `±`；\n"
+            "3. `inspection_method` 只填量检具/试验仪器，`acceptance_criteria` 只填合格判据数值或状态边界；\n"
+            "4. 若某条确系括号参考尺寸（如 `(120)`）或非受控设备维护要求，请将其从结果中剔除；若原文本身就是待定/参考项，请保留并将 `confidence` 设为 `\"低\"`、`needs_human_review` 设为 `true`。\n"
+            f"{JSON_SCHEMA_INSTRUCTION}"
+        )
+        messages: List[Dict[str, str]] = [
+            {
+                "role": "system",
+                "content": "你是严谨的汽车行业 IATF 16949 质量审核专家，负责对提取存在偏差的控制计划检查项进行精准溯源修正并输出 JSON。",
+            },
+            {"role": "user", "content": feedback_prompt},
+        ]
+        content = self._call_chat_completions(messages)
+        return self._parse_items_from_text(content)
+
+    def _call_chat_completions(self, messages: List[Dict[str, str]]) -> str:
+        """底层 HTTP 调用封装（temperature=0.0 贪婪解码确保数值与符号最高确定性）"""
         payload: Dict[str, Any] = {
             "model": self.model,
-            "messages": [
-                {
-                    "role": "system",
-                    "content": "你是严谨的汽车行业 IATF 16949 质量工程师，专门从技术标准中提取可溯源的控制计划检查项并严格输出 JSON。",
-                },
-                {"role": "user", "content": full_user_prompt},
-            ],
-            "temperature": 0.1,
+            "messages": messages,
+            "temperature": 0.0,
             "max_tokens": 8192,
         }
 
@@ -112,9 +162,7 @@ class DeepSeekClient:
                 raise RuntimeError(f"DeepSeek API 调用失败 (HTTP {resp.status_code}): {detail}")
 
             data = resp.json()
-            content = data["choices"][0]["message"]["content"]
-            items_list = self._parse_items_from_text(content)
-            return json.dumps(items_list, ensure_ascii=False)
+            return data["choices"][0]["message"]["content"]
 
     @staticmethod
     def _salvage_truncated_json(text: str) -> List[Dict[str, Any]]:
@@ -219,6 +267,16 @@ class DeepSeekClient:
             if conf not in valid_conf:
                 conf = conf_alias.get(conf.lower(), "中")
 
+            raw_page = raw_item.get("source_page")
+            parsed_page: Optional[int] = None
+            if raw_page is not None:
+                try:
+                    p_int = int(str(raw_page).strip())
+                    if p_int >= 1:
+                        parsed_page = p_int
+                except (ValueError, TypeError):
+                    pass
+
             normalized.append({
                 "characteristic_name": str(raw_item.get("characteristic_name", "未命名特性")),
                 "characteristic_category": cat,
@@ -226,6 +284,7 @@ class DeepSeekClient:
                 "inspection_method": str(raw_item.get("inspection_method", "待确认")),
                 "acceptance_criteria": str(raw_item.get("acceptance_criteria", "")),
                 "standard_clause": str(raw_item.get("standard_clause", "")),
+                "source_page": parsed_page,
                 "source_quote": str(raw_item.get("source_quote", "")),
                 "confidence": conf,
                 "needs_human_review": bool(raw_item.get("needs_human_review", conf == "低")),
