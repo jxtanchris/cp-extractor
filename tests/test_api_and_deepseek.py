@@ -64,10 +64,12 @@ def test_extract_and_human_review_workflow():
     updated_pkg = rev_resp.json()["package"]
     assert len(updated_pkg["check_items"]) == 11
     assert len(updated_pkg["pending_review_items"]) == 0
+    assert "learning_event" in rev_resp.json()
 
-    # 3. 验证下载接口
+    # 3. 验证下载接口并清理测试产生的自学习计数
     dl_resp = client.get(rev_resp.json()["excel_download_url"])
     assert dl_resp.status_code == 200
+    client.post("/api/learning/reset")
 
 
 def test_deepseek_json_parser_compatibility():
@@ -226,3 +228,172 @@ def test_sqlite_lexicon_crud_and_validator_integration():
         # 6. 恢复默认词库
         reset_resp = client.post("/api/lexicon/reset", json={"category": "all"})
         assert reset_resp.status_code == 200
+
+
+def test_multi_provider_llm_switching_and_config(tmp_path):
+    """测试多后端大模型厂商（DeepSeek / Qwen / GLM / Kimi / SiliconFlow / OpenAI / Ollama）切换、URL 规范化与 <think> 剥离"""
+    from src.cp_extractor.core.llm_client import (
+        LLMClient,
+        LLM_PROVIDERS,
+        normalize_base_url,
+        persist_llm_config_to_env,
+    )
+
+    # 1. 验证 /api/llm/providers 与 /api/config 接口返回完整 8 类预设厂商
+    cfg_resp = client.get("/api/llm/providers")
+    assert cfg_resp.status_code == 200
+    cfg_data = cfg_resp.json()
+    provider_keys = {p["key"] for p in cfg_data["providers"]}
+    assert provider_keys == set(LLM_PROVIDERS.keys())
+    assert {"deepseek", "qwen", "zhipu", "kimi", "siliconflow", "openai", "ollama", "custom"}.issubset(provider_keys)
+
+    # 2. 验证不同厂商 Base URL 的智能规范化（保留 /v4、/compatible-mode/v1，自动补齐 /v1）
+    assert normalize_base_url("https://api.deepseek.com") == "https://api.deepseek.com/v1"
+    assert normalize_base_url("https://open.bigmodel.cn/api/paas/v4") == "https://open.bigmodel.cn/api/paas/v4"
+    assert normalize_base_url("https://dashscope.aliyuncs.com/compatible-mode/v1") == "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    assert normalize_base_url("https://api.moonshot.cn/v1/chat/completions") == "https://api.moonshot.cn/v1"
+
+    # 3. 验证本地 Ollama 免 API Key 自动就绪与各厂商客户端初始化
+    ollama_client = LLMClient(provider="ollama", api_key="", base_url="http://127.0.0.1:11434/v1", model="qwen2.5:14b")
+    assert ollama_client.is_configured is True
+    assert ollama_client.display_label == "Ollama (qwen2.5:14b)"
+
+    qwen_client = LLMClient(provider="qwen", api_key="sk-test-qwen", model="qwen-plus", temperature=0.2)
+    assert qwen_client.is_configured is True
+    assert qwen_client.base_url == "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    assert qwen_client.display_label == "Qwen (qwen-plus)"
+    assert qwen_client.temperature == 0.2
+
+    # 验证 Kimi K2 系列 (如 kimi-k2.6) 自动适配固定 temperature=1.0
+    kimi_k2_client = LLMClient(provider="kimi", api_key="sk-test-kimi", model="kimi-k2.6", temperature=0.0)
+    assert kimi_k2_client.temperature == 1.0
+
+    # 4. 验证推理模型（如 QwQ / DeepSeek-R1 / 本地 R1）带 <think>...</think> 标签的响应解析
+    think_output = """<think>
+首先分析第 3.1 条款中的拉伸强度要求...
+</think>
+{
+  "items": [
+    {
+      "characteristic_name": "抗拉强度 Rm",
+      "characteristic_category": "材料",
+      "specification": "≥ 500 MPa",
+      "inspection_method": "电子万能试验机",
+      "acceptance_criteria": "Rm ≥ 500 MPa",
+      "standard_clause": "3.1",
+      "source_quote": "抗拉强度 Rm 不小于 500 MPa",
+      "confidence": "高",
+      "needs_human_review": false
+    }
+  ]
+}"""
+    parsed_items = LLMClient._parse_items_from_text(think_output)
+    assert len(parsed_items) == 1
+    assert parsed_items[0]["characteristic_name"] == "抗拉强度 Rm"
+
+    # 5. 验证持久化写入 .env 文件逻辑
+    temp_env = tmp_path / ".env"
+    temp_env.write_text("DEEPSEEK_API_KEY=sk-old\n", encoding="utf-8")
+    persist_llm_config_to_env(
+        env_path=temp_env,
+        provider="qwen",
+        api_key="sk-qwen-12345",
+        base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
+        model="qwen-max",
+    )
+    env_content = temp_env.read_text(encoding="utf-8")
+    assert "LLM_PROVIDER=qwen" in env_content
+    assert "DASHSCOPE_API_KEY=sk-qwen-12345" in env_content
+    assert "LLM_MODEL=qwen-max" in env_content
+
+
+def test_feedback_rule_learning_auto_promotion_and_auto_apply():
+    """
+    测试人工复核自学习闭环：
+    当工程师累计 N 次（默认 3 次）将同一待确认项手工准入控制计划后，
+    系统自动生成生效规则，后续提取时自动放行并回填工程师指定的检查方法与判据，且同步注入提示词。
+    """
+    from src.cp_extractor.core.prompt_builder import PromptBuilder
+
+    client.post("/api/learning/reset")
+    client.put("/api/learning/settings", json={"threshold": 3})
+
+    try:
+        sample_data = client.get("/api/samples/sample_tolerance_iso2768.md").json()
+
+        # 初始状态：提取公差标准样本有 10 条正式项，1 条待人工确认项（局部非关键翻边轮廓度）
+        ext1 = client.post(
+            "/api/extract",
+            json={
+                "file_name": "sample_tolerance_iso2768.md",
+                "content": sample_data["content"],
+                "engine_mode": "rule",
+            },
+        ).json()["package"]
+        assert len(ext1["check_items"]) == 10
+        assert len(ext1["pending_review_items"]) == 1
+
+        pending_item = ext1["pending_review_items"][0]
+        assert pending_item["characteristic_name"] == "局部非关键翻边轮廓度"
+
+        revised_item = {
+            **pending_item,
+            "specification": "轮廓度 ⌓ ≤ 0.5 mm",
+            "inspection_method": "光学三维扫描仪",
+            "acceptance_criteria": "实测轮廓度误差 ≤ 0.5 mm",
+        }
+
+        # 第 1 次手工准入：计数 1/3，尚未激活
+        r1 = client.post(
+            "/api/approve-review",
+            json={"package": ext1, "review_index": 0, "action": "approve", "updated_item": revised_item},
+        ).json()["learning_event"]
+        assert r1["current_count"] == 1
+        assert r1["rule"]["is_active"] is False
+
+        # 第 2 次手工准入：计数 2/3，尚未激活
+        r2 = client.post(
+            "/api/approve-review",
+            json={"package": ext1, "review_index": 0, "action": "approve", "updated_item": revised_item},
+        ).json()["learning_event"]
+        assert r2["current_count"] == 2
+        assert r2["rule"]["is_active"] is False
+
+        # 第 3 次手工准入：达到阈值 3/3，自动升格为生效规则！
+        r3 = client.post(
+            "/api/approve-review",
+            json={"package": ext1, "review_index": 0, "action": "approve", "updated_item": revised_item},
+        ).json()["learning_event"]
+        assert r3["current_count"] == 3
+        assert r3["just_promoted"] is True
+        assert r3["rule"]["is_active"] is True
+
+        # 验证 1：再次运行提取时，门禁自动放行该项并自动回填工程师习惯的检查方法与判据（待确认项变为 0，正式项变为 11）
+        ext_after = client.post(
+            "/api/extract",
+            json={
+                "file_name": "sample_tolerance_iso2768.md",
+                "content": sample_data["content"],
+                "engine_mode": "rule",
+            },
+        ).json()["package"]
+        assert len(ext_after["pending_review_items"]) == 0
+        assert len(ext_after["check_items"]) == 11
+        auto_approved = next(
+            i for i in ext_after["check_items"] if i["characteristic_name"] == "局部非关键翻边轮廓度"
+        )
+        assert auto_approved["inspection_method"] == "光学三维扫描仪"
+        assert auto_approved["acceptance_criteria"] == "实测轮廓度误差 ≤ 0.5 mm"
+        assert auto_approved["needs_human_review"] is False
+        assert "自学习规则已自动准入" in (auto_approved.get("notes") or "")
+
+        # 验证 2：PromptBuilder 组装的提示词中已自动注入该条自学习规则
+        assembled_prompt = PromptBuilder().build_extraction_prompt("tolerance")
+        assert "系统自学习历史人工复核规则" in assembled_prompt
+        assert "局部非关键翻边轮廓度" in assembled_prompt
+        assert "光学三维扫描仪" in assembled_prompt
+    finally:
+        client.post("/api/learning/reset")
+        client.post("/api/lexicon/reset", json={"category": "all"})
+
+

@@ -12,6 +12,7 @@ import re
 from pathlib import Path
 from typing import Dict, Tuple
 
+from src.cp_extractor.core.llm_client import LLM_PROVIDERS
 from src.cp_extractor.core.prompt_builder import DEFAULT_TEMPLATES
 from src.cp_extractor.schemas.models import (
     CharacteristicCategory,
@@ -157,3 +158,10 @@ def test_spec_referenced_files_and_templates_exist():
         assert expected_rel in referenced_paths, (
             f"PromptBuilder 中的模板 '{tpl_key}' ({expected_rel}) 未在 spec.md 中登记"
         )
+
+    # 验证 LLM_PROVIDERS 中的所有大模型服务商标识均已在 spec.md 中登记
+    for provider_key in LLM_PROVIDERS.keys():
+        assert f"`{provider_key}`" in spec_text, (
+            f"LLM_PROVIDERS 中的大模型服务商 '{provider_key}' 未在 spec.md 中声明"
+        )
+

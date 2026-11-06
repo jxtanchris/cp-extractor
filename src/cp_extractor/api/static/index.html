@@ -588,6 +588,50 @@
     }
     .lex-icon-btn:hover { background: #e2e8f0; color: #0f172a; }
     .lex-icon-btn.del:hover { background: #fee2e2; color: var(--danger); }
+
+    /* 多厂商大模型切换网格样式 */
+    .provider-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 8px;
+      margin-bottom: 14px;
+    }
+    .provider-chip {
+      border: 1px solid var(--border);
+      background: #f8fafc;
+      border-radius: 8px;
+      padding: 8px 10px;
+      cursor: pointer;
+      text-align: left;
+      transition: all 0.15s;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+    .provider-chip:hover {
+      border-color: #93c5fd;
+      background: #f0f9ff;
+    }
+    .provider-chip.active {
+      border-color: var(--primary);
+      background: #eff6ff;
+      box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.14);
+    }
+    .provider-chip .p-title {
+      font-size: 12.5px;
+      font-weight: 600;
+      color: #0f172a;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .provider-chip .p-sub {
+      font-size: 11px;
+      color: var(--muted);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
   </style>
 </head>
 <body>
@@ -595,9 +639,12 @@
 <header>
   <div class="brand">
     <h1>CP-Extractor 标准→控制计划(检查项提取系统)</h1>
-    <span class="tag">DeepSeek@Christan</span>
+    <span class="tag" id="headerProviderTag">DeepSeek@Christan</span>
   </div>
   <div class="top-controls">
+    <button class="btn-top" onclick="openLearningModal()">
+      🧠 自学习规则 (<span id="topLearnedCount">0</span>)
+    </button>
     <button class="btn-top" onclick="openLexiconModal()">
       🗂️ 量检具/单位校验词库
     </button>
@@ -605,7 +652,7 @@
       📝 提示词与人工确认标准配置
     </button>
     <button class="btn-top" onclick="openModal()">
-      <span id="dsStatusDot" class="status-dot"></span>DeepSeek API 配置
+      <span id="dsStatusDot" class="status-dot"></span><span id="topModelBtnLabel">🤖 模型配置: DeepSeek</span>
     </button>
     <a href="/docs" target="_blank" class="btn-top">API 文档</a>
   </div>
@@ -667,9 +714,14 @@
 
       <!-- 第三步：点击按钮提取 -->
       <div class="step-block" style="margin-top:4px;">
-        <div class="step-title">
-          <span class="step-num">3</span>
-          <span>调用大模型提取控制计划检查项</span>
+        <div class="step-title" style="justify-content: space-between;">
+          <div style="display:flex; align-items:center; gap:8px;">
+            <span class="step-num">3</span>
+            <span>调用大模型提取控制计划检查项</span>
+          </div>
+          <button type="button" class="btn-sm" style="background:#eff6ff; color:var(--primary); border:1px solid #bfdbfe; padding:3px 9px; font-size:11.5px;" onclick="openModal()">
+            🔄 切换模型 (<span id="step3ModelBadge">DeepSeek · deepseek-chat</span>)
+          </button>
         </div>
         <button class="btn-primary" id="extractBtn" onclick="startExtraction()">
           🚀 开始提取检查项
@@ -725,6 +777,11 @@
         </button>
       </div>
 
+      <div id="learningToastBanner" style="display:none; padding:9px 14px; border-radius:8px; font-size:12.5px; display:none; align-items:center; justify-content:space-between; gap:10px;">
+        <span id="learningToastText"></span>
+        <button type="button" class="btn-sm" style="background:#ffffff; color:#1e40af; border:1px solid #93c5fd; white-space:nowrap;" onclick="openLearningModal()">🧠 查看自学习规则</button>
+      </div>
+
       <!-- Tab 1: 正式检查项表格 -->
       <div class="table-wrap" id="viewValid">
         <table>
@@ -765,33 +822,75 @@
   </div>
 </div>
 
-<!-- DeepSeek 配置弹窗 -->
+<!-- 多后端大模型切换与 API 配置弹窗 -->
 <div class="modal-backdrop" id="dsModal">
-  <div class="modal">
-    <h3>⚡ DeepSeek 大模型 API 配置</h3>
-    <p style="font-size:12px; color:var(--muted); margin-bottom:12px;">
-      配置一次即可自动保存在浏览器本地，也可写入项目根目录下的 <code>.env</code> 文件。
+  <div class="modal" style="width:640px; max-width:95vw;">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+      <h3 style="margin:0;">🤖 后端大模型切换与 API 配置</h3>
+      <button class="btn-sm" style="background:#f1f5f9;" onclick="closeModal()">✖ 关闭</button>
+    </div>
+    <p style="font-size:12px; color:var(--muted); margin-bottom:10px;">
+      支持一键切换主流云端大模型与本地私有化模型。各厂商配置独立记忆，并可同步写入服务端 <code>.env</code> 文件。
     </p>
+
     <div class="field">
-      <label>DeepSeek API Key <span id="envKeyHint" style="color:var(--success);"></span></label>
+      <label>1. 选择大模型服务商 (Provider)</label>
+      <div class="provider-grid" id="providerGrid"></div>
+    </div>
+
+    <div class="field">
+      <label><span id="apiKeyLabelText">API Key</span> <span id="envKeyHint" style="color:var(--success); font-weight:normal;"></span></label>
       <input type="password" id="dsApiKey" class="form-control" placeholder="sk-..." />
     </div>
+
     <div class="field">
-      <label>API Base URL</label>
+      <label>API Base URL (OpenAI 兼容接口地址)</label>
       <input type="text" id="dsBaseUrl" class="form-control" value="https://api.deepseek.com" />
     </div>
+
     <div class="field">
-      <label>模型名称 (Model)</label>
-      <select id="dsModel" class="form-control">
-        <option value="deepseek-chat">deepseek-chat (DeepSeek-V3，推荐)</option>
-        <option value="deepseek-reasoner">deepseek-reasoner (DeepSeek-R1 深度推理)</option>
-      </select>
+      <label>模型名称 (Model) — 可从预设中选择或直接输入自定义模型 ID</label>
+      <div style="display:grid; grid-template-columns: 1fr 1fr; gap:8px;">
+        <select id="dsModelSelect" class="form-control" onchange="onPresetModelSelectChange()">
+          <option value="deepseek-chat">deepseek-chat (DeepSeek-V3，推荐)</option>
+          <option value="deepseek-reasoner">deepseek-reasoner (DeepSeek-R1 深度推理)</option>
+        </select>
+        <input type="text" id="dsModel" class="form-control" value="deepseek-chat" oninput="onCustomModelInputChange()" placeholder="手动输入模型 ID (如 qwen-plus / kimi-k2.6)" />
+      </div>
     </div>
-    <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; margin-top:16px;">
-      <button class="btn-sm" style="background:#fef2f2; color:#dc2626;" onclick="clearLocalDsKey()">清除浏览器缓存 Key (使用 .env)</button>
+
+    <div class="field">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
+        <label style="margin:0;">采样温度 (Temperature) <span id="tempModeHint" style="font-weight:normal; color:var(--muted); font-size:11px;">(默认 0.0 保障数值零幻觉；Kimi K2 等推理模型要求 1.0)</span></label>
+        <div style="display:flex; gap:4px;">
+          <button type="button" class="preset-chip" style="padding:2px 7px; font-size:11px;" onclick="setTemperaturePreset(0.0)">0.0 严谨确定</button>
+          <button type="button" class="preset-chip" style="padding:2px 7px; font-size:11px;" onclick="setTemperaturePreset(0.3)">0.3 适度</button>
+          <button type="button" class="preset-chip" style="padding:2px 7px; font-size:11px;" onclick="setTemperaturePreset(1.0)">1.0 (Kimi-k2/推理专用)</button>
+        </div>
+      </div>
+      <div style="display:grid; grid-template-columns: 1fr 90px; gap:10px; align-items:center;">
+        <input type="range" id="dsTempSlider" min="0" max="2" step="0.1" value="0" oninput="document.getElementById('dsTemperature').value = this.value" style="cursor:pointer;" />
+        <input type="number" id="dsTemperature" class="form-control" min="0" max="2" step="0.1" value="0.0" oninput="document.getElementById('dsTempSlider').value = this.value" style="text-align:center; font-weight:600;" />
+      </div>
+    </div>
+
+    <div id="llmTestResultBox" style="display:none; padding:8px 12px; border-radius:6px; font-size:12px; margin-top:8px;"></div>
+
+    <div style="display:flex; align-items:center; justify-content:space-between; margin-top:12px; padding-top:10px; border-top:1px solid var(--border);">
+      <label style="display:flex; align-items:center; gap:6px; font-size:12px; color:#334155; cursor:pointer;">
+        <input type="checkbox" id="syncToEnvCheck" checked />
+        保存时同步写入服务端 <code>.env</code> 配置文件
+      </label>
+      <button type="button" class="btn-sm" style="background:#fef2f2; color:#dc2626;" onclick="clearLocalDsKey()">清除当前厂商浏览器缓存</button>
+    </div>
+
+    <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; margin-top:12px;">
+      <button type="button" class="btn-sm" id="testLlmBtn" style="background:#eff6ff; color:var(--primary); border:1px solid #bfdbfe; padding:7px 14px;" onclick="testLlmConnection()">
+        🔌 测试模型连通性
+      </button>
       <div style="display:flex; gap:8px;">
-        <button class="btn-sm" style="background:#f1f5f9;" onclick="closeModal()">取消</button>
-        <button class="btn-primary" style="width:auto; padding:6px 18px; font-size:13px;" onclick="saveDsConfig()">保存配置</button>
+        <button type="button" class="btn-sm" style="background:#f1f5f9;" onclick="closeModal()">取消</button>
+        <button type="button" class="btn-primary" style="width:auto; padding:7px 18px; font-size:13px;" onclick="saveDsConfig()">💾 保存并切换模型</button>
       </div>
     </div>
   </div>
@@ -964,28 +1063,156 @@
   </div>
 </div>
 
+<!-- 人工复核自学习规则中心弹窗 -->
+<div class="modal-backdrop" id="learningModal">
+  <div class="modal modal-lg" style="width:960px;">
+    <div class="prompt-modal-header">
+      <div>
+        <h3 style="margin:0; font-size:16px;">🧠 人工复核自学习规则中心 (Human-in-the-Loop Rule Evolution)</h3>
+        <div style="font-size:12px; color:var(--muted); margin-top:2px;">
+          系统自动观察您在「⚠️ 待人工确认项」上的每一次手工准入或驳回操作。当同一项目累计达到设定次数阈值后，<b>自动改写门禁直通规则与提取提示词</b>，后续提取不再重复打扰！
+        </div>
+      </div>
+      <button class="btn-sm" style="background:#e2e8f0; color:#334155;" onclick="closeLearningModal()">✖ 关闭</button>
+    </div>
+
+    <div style="padding:14px 18px; display:flex; flex-direction:column; gap:12px; flex:1; overflow:hidden;">
+      <!-- 顶部阈值配置与统计栏 -->
+      <div style="display:flex; justify-content:space-between; align-items:center; background:#f8fafc; border:1px solid var(--border); padding:10px 14px; border-radius:8px; flex-wrap:wrap; gap:10px;">
+        <div style="display:flex; align-items:center; gap:8px; font-size:13px;">
+          <span style="font-weight:600; color:#0f172a;">⚙️ 自动改规则触发阈值：</span>
+          <span>当同一待确认项被手工准入/驳回达到</span>
+          <select id="learningThresholdSelect" class="form-control" style="width:135px; font-weight:600; padding:4px 8px;" onchange="updateLearningThreshold()">
+            <option value="1">1 次 (立即学习)</option>
+            <option value="2">2 次</option>
+            <option value="3" selected>3 次 (推荐)</option>
+            <option value="5">5 次 (保守)</option>
+          </select>
+          <span>时，自动升格为正式规则</span>
+        </div>
+        <div style="display:flex; align-items:center; gap:12px; font-size:12.5px;">
+          <span class="badge badge-high">⚡ 已自动生效规则: <b id="learnActiveCount">0</b> 条</span>
+          <span class="badge badge-med">👀 观察累计中: <b id="learnPendingCount">0</b> 条</span>
+          <span id="learnModalStatus" style="color:var(--success); font-weight:600;"></span>
+        </div>
+      </div>
+
+      <!-- 规则列表表格 -->
+      <div class="table-wrap" style="flex:1; overflow:auto;">
+        <table>
+          <thead>
+            <tr>
+              <th style="width:110px;">标准类别</th>
+              <th style="width:160px;">特性名称</th>
+              <th style="width:105px;">学习方向</th>
+              <th style="width:110px;">累计频次 / 状态</th>
+              <th>自动套用的检查方法 & 判定准则 (可在线微调)</th>
+              <th style="width:150px;">操作</th>
+            </tr>
+          </thead>
+          <tbody id="learningTableBody">
+            <tr>
+              <td colspan="6" style="text-align:center; padding:40px; color:var(--muted);">加载中...</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="prompt-modal-footer">
+      <button type="button" class="btn-sm" style="background:#fef2f2; color:#dc2626;" onclick="resetAllLearnedRules()">
+        🗑️ 清空全部自学习记录与规则
+      </button>
+      <button type="button" class="btn-primary" style="width:auto; padding:7px 20px; font-size:13.5px;" onclick="closeLearningModal()">
+        完成并关闭
+      </button>
+    </div>
+  </div>
+</div>
+
 <script>
   let selectedFile = null;
   let selectedCategory = 'tolerance';
   let currentPackage = null;
   let serverHasEnvKey = false;
+  let allLlmProviders = [];
+  let activeProviderKey = 'deepseek';
+  let providerConfigs = {}; // { [providerKey]: { api_key, base_url, model } }
+
+  function loadLocalProviderConfigs() {
+    try {
+      const raw = localStorage.getItem('llm_provider_configs');
+      if (raw) {
+        providerConfigs = JSON.parse(raw) || {};
+      }
+    } catch (e) {
+      providerConfigs = {};
+    }
+    // 兼容旧版单厂商 DeepSeek 缓存
+    if (!providerConfigs.deepseek) {
+      const legacyKey = localStorage.getItem('ds_api_key') || '';
+      const legacyUrl = localStorage.getItem('ds_base_url') || '';
+      const legacyModel = localStorage.getItem('ds_model') || '';
+      if (legacyKey || legacyUrl || legacyModel) {
+        providerConfigs.deepseek = {
+          api_key: legacyKey,
+          base_url: legacyUrl || 'https://api.deepseek.com',
+          model: legacyModel || 'deepseek-chat',
+        };
+      }
+    }
+  }
+
+  function saveLocalProviderConfigs() {
+    localStorage.setItem('llm_provider_configs', JSON.stringify(providerConfigs));
+    localStorage.setItem('llm_active_provider', activeProviderKey);
+  }
+
+  function getProviderMeta(pKey) {
+    return allLlmProviders.find(p => p.key === pKey) || {
+      key: 'deepseek',
+      name: 'DeepSeek (深度求索)',
+      short_name: 'DeepSeek',
+      base_url: 'https://api.deepseek.com',
+      default_model: 'deepseek-chat',
+      models: [
+        { id: 'deepseek-chat', label: 'deepseek-chat (DeepSeek-V3，推荐)' },
+        { id: 'deepseek-reasoner', label: 'deepseek-reasoner (DeepSeek-R1 深度推理)' }
+      ],
+      requires_key: true,
+      has_env_key: serverHasEnvKey,
+      masked_env_key: '',
+      placeholder: 'sk-...'
+    };
+  }
 
   async function initApp() {
-    document.getElementById('dsApiKey').value = localStorage.getItem('ds_api_key') || '';
-    if (localStorage.getItem('ds_base_url')) {
-      document.getElementById('dsBaseUrl').value = localStorage.getItem('ds_base_url');
-    }
-    if (localStorage.getItem('ds_model')) {
-      document.getElementById('dsModel').value = localStorage.getItem('ds_model');
-    }
+    loadLocalProviderConfigs();
 
     const cfgResp = await fetch('/api/config');
     const cfg = await cfgResp.json();
+    allLlmProviders = cfg.providers || [];
     serverHasEnvKey = cfg.has_env_key;
-    if (serverHasEnvKey) {
-      document.getElementById('envKeyHint').textContent = `(服务端 .env 已配置 ${cfg.masked_env_key})`;
+
+    const savedActive = localStorage.getItem('llm_active_provider');
+    activeProviderKey = savedActive || cfg.active_provider || 'deepseek';
+    if (!allLlmProviders.some(p => p.key === activeProviderKey)) {
+      activeProviderKey = 'deepseek';
     }
+
+    // 若服务端 .env 配置了默认地址与模型，且本地尚未覆盖该厂商，用服务端默认值初始化
+    if (!providerConfigs[cfg.active_provider]) {
+      providerConfigs[cfg.active_provider] = {
+        api_key: '',
+        base_url: cfg.default_base_url,
+        model: cfg.default_model,
+      };
+    }
+
+    renderProviderGrid();
+    applyProviderToForm(activeProviderKey);
     updateDsStatusIndicator();
+    refreshLearningBadge();
 
     // 支持拖拽上传
     const dz = document.getElementById('dropzone');
@@ -1015,6 +1242,120 @@
         }
       }
     });
+  }
+
+  function renderProviderGrid() {
+    const grid = document.getElementById('providerGrid');
+    if (!grid) return;
+    grid.innerHTML = allLlmProviders.map(p => {
+      const localCfg = providerConfigs[p.key] || {};
+      const isReady = Boolean((localCfg.api_key || '').trim()) || p.has_env_key || !p.requires_key;
+      const dotColor = isReady ? '#10b981' : '#cbd5e1';
+      const activeCls = p.key === activeProviderKey ? 'active' : '';
+      const activeModel = localCfg.model || p.default_model;
+      return `
+        <div class="provider-chip ${activeCls}" onclick="selectLlmProvider('${p.key}')">
+          <div class="p-title">
+            <span>${escapeHtml(p.short_name)}</span>
+            <span style="width:7px; height:7px; border-radius:50%; background:${dotColor}; display:inline-block;" title="${isReady ? '已就绪' : '待配置 Key'}"></span>
+          </div>
+          <div class="p-sub" title="${escapeHtml(p.name)}">${escapeHtml(activeModel)}</div>
+        </div>
+      `;
+    }).join('');
+  }
+
+  function isFixedTempOneModel(modelName) {
+    const m = (modelName || '').toLowerCase();
+    return m.includes('kimi-k2') || m.includes('kimi-thinking') || m.includes('k2.5') || m.includes('k2.6') || m.includes('o1') || m.includes('o3');
+  }
+
+  function setTemperaturePreset(val) {
+    const num = Number(val).toFixed(1);
+    document.getElementById('dsTemperature').value = num;
+    document.getElementById('dsTempSlider').value = num;
+  }
+
+  function snapshotCurrentFormToProviderConfig() {
+    if (!activeProviderKey) return;
+    const rawTemp = parseFloat(document.getElementById('dsTemperature')?.value ?? '0');
+    providerConfigs[activeProviderKey] = {
+      api_key: document.getElementById('dsApiKey').value.trim(),
+      base_url: document.getElementById('dsBaseUrl').value.trim(),
+      model: document.getElementById('dsModel').value.trim(),
+      temperature: Number.isNaN(rawTemp) ? 0.0 : rawTemp,
+    };
+  }
+
+  function selectLlmProvider(pKey) {
+    snapshotCurrentFormToProviderConfig();
+    activeProviderKey = pKey;
+    applyProviderToForm(pKey);
+    renderProviderGrid();
+    const testBox = document.getElementById('llmTestResultBox');
+    if (testBox) testBox.style.display = 'none';
+  }
+
+  function applyProviderToForm(pKey) {
+    const meta = getProviderMeta(pKey);
+    const saved = providerConfigs[pKey] || {};
+
+    const apiKeyInput = document.getElementById('dsApiKey');
+    const baseUrlInput = document.getElementById('dsBaseUrl');
+    const modelSelect = document.getElementById('dsModelSelect');
+    const modelInput = document.getElementById('dsModel');
+    const keyLabel = document.getElementById('apiKeyLabelText');
+    const envHint = document.getElementById('envKeyHint');
+
+    keyLabel.textContent = `${meta.name} API Key`;
+    apiKeyInput.placeholder = meta.placeholder || 'sk-...';
+    apiKeyInput.value = saved.api_key || '';
+    baseUrlInput.value = saved.base_url || meta.base_url;
+
+    const targetModel = saved.model || meta.default_model;
+    modelSelect.innerHTML = (meta.models || []).map(m =>
+      `<option value="${escapeHtml(m.id)}">${escapeHtml(m.label)}</option>`
+    ).join('') + `<option value="__custom__">✏️ 自定义模型 ID...</option>`;
+
+    const presetIds = (meta.models || []).map(m => m.id);
+    if (presetIds.includes(targetModel)) {
+      modelSelect.value = targetModel;
+    } else {
+      modelSelect.value = '__custom__';
+    }
+    modelInput.value = targetModel;
+
+    const defaultTemp = isFixedTempOneModel(targetModel) ? 1.0 : 0.0;
+    const targetTemp = saved.temperature !== undefined ? saved.temperature : defaultTemp;
+    setTemperaturePreset(isFixedTempOneModel(targetModel) ? 1.0 : targetTemp);
+
+    if (!meta.requires_key) {
+      envHint.textContent = '(本地模型免 API Key)';
+    } else if (meta.has_env_key && meta.masked_env_key) {
+      envHint.textContent = `(服务端 .env 已配置 ${meta.masked_env_key})`;
+    } else {
+      envHint.textContent = '';
+    }
+  }
+
+  function onPresetModelSelectChange() {
+    const val = document.getElementById('dsModelSelect').value;
+    const modelInput = document.getElementById('dsModel');
+    if (val && val !== '__custom__') {
+      modelInput.value = val;
+      if (isFixedTempOneModel(val)) {
+        setTemperaturePreset(1.0);
+      }
+    } else {
+      modelInput.focus();
+    }
+  }
+
+  function onCustomModelInputChange() {
+    const val = document.getElementById('dsModel').value.trim();
+    if (isFixedTempOneModel(val)) {
+      setTemperaturePreset(1.0);
+    }
   }
 
   function onFileSelected(ev) {
@@ -1049,41 +1390,70 @@
   }
 
   function updateDsStatusIndicator() {
+    const meta = getProviderMeta(activeProviderKey);
     const localKey = (document.getElementById('dsApiKey').value || '').trim();
+    const curModel = (document.getElementById('dsModel').value || meta.default_model).trim();
     const dot = document.getElementById('dsStatusDot');
-    if (localKey || serverHasEnvKey) {
+    const isReady = Boolean(localKey) || Boolean(meta.has_env_key) || !meta.requires_key;
+
+    if (isReady) {
       dot.classList.add('ready');
     } else {
       dot.classList.remove('ready');
+    }
+
+    const topBtnLabel = document.getElementById('topModelBtnLabel');
+    if (topBtnLabel) {
+      topBtnLabel.textContent = `🤖 模型: ${meta.short_name} (${curModel})`;
+    }
+    const headerTag = document.getElementById('headerProviderTag');
+    if (headerTag) {
+      headerTag.textContent = `${meta.short_name}@Christan`;
+    }
+    const step3Badge = document.getElementById('step3ModelBadge');
+    if (step3Badge) {
+      step3Badge.textContent = `${meta.short_name} · ${curModel}`;
     }
   }
 
   async function startExtraction() {
     if (!selectedFile) {
-      alert('请先在第一步上传 PDF / Word / Markdown 标准文档！');
+      alert('请先在第一步上传 PDF / Word / Markdown 标准文档或粘贴截图！');
       return;
     }
 
+    snapshotCurrentFormToProviderConfig();
+    const meta = getProviderMeta(activeProviderKey);
     const localKey = (document.getElementById('dsApiKey').value || '').trim();
-    if (!localKey && !serverHasEnvKey) {
+    const curBaseUrl = document.getElementById('dsBaseUrl').value.trim() || meta.base_url;
+    const curModel = document.getElementById('dsModel').value.trim() || meta.default_model;
+
+    if (meta.requires_key && !localKey && !meta.has_env_key) {
       openModal();
-      alert('请先填入你的 DeepSeek API Key！');
+      alert(`请先填入 ${meta.name} 的 API Key！`);
       return;
     }
 
     const btn = document.getElementById('extractBtn');
     const msg = document.getElementById('statusMsg');
     btn.disabled = true;
-    btn.textContent = '⏳ DeepSeek 正在阅读标准并提取检查项...';
-    msg.textContent = '正在解析文档并调用 DeepSeek 大模型（约需 5~20 秒，请稍候）...';
+    btn.textContent = `⏳ ${meta.short_name} (${curModel}) 正在阅读标准并提取检查项...`;
+    msg.textContent = `正在解析文档并调用 ${meta.name} [${curModel}]（约需 5~20 秒，请稍候）...`;
 
     try {
       const formData = new FormData();
       formData.append('file', selectedFile);
       formData.append('category', selectedCategory);
-      if (localKey) formData.append('deepseek_api_key', localKey);
-      formData.append('deepseek_base_url', document.getElementById('dsBaseUrl').value.trim());
-      formData.append('deepseek_model', document.getElementById('dsModel').value);
+      formData.append('llm_provider', activeProviderKey);
+      if (localKey) {
+        formData.append('llm_api_key', localKey);
+        formData.append('deepseek_api_key', localKey);
+      }
+      formData.append('llm_base_url', curBaseUrl);
+      formData.append('llm_model', curModel);
+      formData.append('llm_temperature', String(providerConfigs[activeProviderKey]?.temperature ?? 0.0));
+      formData.append('deepseek_base_url', curBaseUrl);
+      formData.append('deepseek_model', curModel);
 
       const resp = await fetch('/api/extract-document', {
         method: 'POST',
@@ -1262,30 +1632,141 @@
     if (resp.ok) {
       const data = await resp.json();
       renderResult(data.package, data.excel_download_url, data.json_download_url);
+      if (data.learning_summary) {
+        document.getElementById('topLearnedCount').textContent = data.learning_summary.active_count || 0;
+      }
+      if (data.learning_event && data.learning_event.message) {
+        const banner = document.getElementById('learningToastBanner');
+        const textEl = document.getElementById('learningToastText');
+        banner.style.display = 'flex';
+        if (data.learning_event.just_promoted) {
+          banner.style.background = '#ecfdf5';
+          banner.style.border = '1px solid #6ee7b7';
+          banner.style.color = '#065f46';
+        } else {
+          banner.style.background = '#eff6ff';
+          banner.style.border = '1px solid #bfdbfe';
+          banner.style.color = '#1e40af';
+        }
+        textEl.textContent = data.learning_event.message;
+      }
     }
   }
 
   function openModal() {
+    renderProviderGrid();
+    applyProviderToForm(activeProviderKey);
+    const testBox = document.getElementById('llmTestResultBox');
+    if (testBox) testBox.style.display = 'none';
     document.getElementById('dsModal').classList.add('open');
   }
   function closeModal() {
     document.getElementById('dsModal').classList.remove('open');
   }
-  function saveDsConfig() {
+  async function testLlmConnection() {
+    snapshotCurrentFormToProviderConfig();
+    const meta = getProviderMeta(activeProviderKey);
     const key = document.getElementById('dsApiKey').value.trim();
-    const url = document.getElementById('dsBaseUrl').value.trim();
-    const model = document.getElementById('dsModel').value;
-    localStorage.setItem('ds_api_key', key);
-    localStorage.setItem('ds_base_url', url);
-    localStorage.setItem('ds_model', model);
+    const url = document.getElementById('dsBaseUrl').value.trim() || meta.base_url;
+    const model = document.getElementById('dsModel').value.trim() || meta.default_model;
+    const temp = providerConfigs[activeProviderKey]?.temperature ?? 0.0;
+
+    const btn = document.getElementById('testLlmBtn');
+    const box = document.getElementById('llmTestResultBox');
+    btn.disabled = true;
+    btn.textContent = '⏳ 正在连接测试...';
+    box.style.display = 'block';
+    box.style.background = '#f8fafc';
+    box.style.color = '#334155';
+    box.style.border = '1px solid #cbd5e1';
+    box.textContent = `正在向 ${meta.short_name} (${model}, temperature=${temp}) 发送连通性探针请求...`;
+
+    try {
+      const resp = await fetch('/api/llm/test', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          provider: activeProviderKey,
+          api_key: key || null,
+          base_url: url,
+          model: model,
+          temperature: temp,
+        })
+      });
+      const data = await resp.json();
+      if (resp.ok && data.ok) {
+        if (data.temperature !== undefined) {
+          setTemperaturePreset(data.temperature);
+          providerConfigs[activeProviderKey].temperature = data.temperature;
+        }
+        box.style.background = '#ecfdf5';
+        box.style.color = '#065f46';
+        box.style.border = '1px solid #a7f3d0';
+        box.textContent = `✅ 连通成功！服务商: ${data.provider_name} · 模型: ${data.model} · temperature=${data.temperature ?? temp} · 响应耗时: ${data.latency_ms}ms · 回复: "${data.reply}"`;
+      } else {
+        box.style.background = '#fef2f2';
+        box.style.color = '#991b1b';
+        box.style.border = '1px solid #fecaca';
+        box.textContent = `❌ 连通失败: ${data.detail || '请检查 API Key、Base URL 或模型名称'}`;
+      }
+    } catch (err) {
+      box.style.background = '#fef2f2';
+      box.style.color = '#991b1b';
+      box.style.border = '1px solid #fecaca';
+      box.textContent = `❌ 网络请求异常: ${err}`;
+    } finally {
+      btn.disabled = false;
+      btn.textContent = '🔌 测试模型连通性';
+    }
+  }
+  async function saveDsConfig() {
+    snapshotCurrentFormToProviderConfig();
+    const cfg = providerConfigs[activeProviderKey] || {};
+    // 同步维护旧版缓存键
+    localStorage.setItem('ds_api_key', cfg.api_key || '');
+    localStorage.setItem('ds_base_url', cfg.base_url || '');
+    localStorage.setItem('ds_model', cfg.model || '');
+    saveLocalProviderConfigs();
+
+    const syncEnv = document.getElementById('syncToEnvCheck')?.checked;
+    if (syncEnv) {
+      try {
+        const resp = await fetch('/api/llm/save-env', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            provider: activeProviderKey,
+            api_key: cfg.api_key || null,
+            base_url: cfg.base_url,
+            model: cfg.model,
+            temperature: cfg.temperature ?? 0.0,
+          })
+        });
+        if (resp.ok) {
+          const data = await resp.json();
+          if (data.config && data.config.providers) {
+            allLlmProviders = data.config.providers;
+            serverHasEnvKey = data.config.has_env_key;
+          }
+        }
+      } catch (e) {
+        console.warn('同步 .env 失败:', e);
+      }
+    }
+
+    renderProviderGrid();
     updateDsStatusIndicator();
     closeModal();
   }
   function clearLocalDsKey() {
+    if (providerConfigs[activeProviderKey]) {
+      providerConfigs[activeProviderKey].api_key = '';
+    }
     localStorage.removeItem('ds_api_key');
     document.getElementById('dsApiKey').value = '';
+    saveLocalProviderConfigs();
+    renderProviderGrid();
     updateDsStatusIndicator();
-    closeModal();
   }
 
   // ==================== 提示词与人工确认判定标准配置逻辑 ====================
@@ -1753,6 +2234,180 @@
     const statusEl = document.getElementById('lexStatusMsg');
     statusEl.style.color = 'var(--success)';
     statusEl.textContent = '🔄 已恢复为出厂默认多语言词库！';
+  }
+
+  // ==================== 人工复核自学习规则中心逻辑 ====================
+  async function refreshLearningBadge() {
+    try {
+      const resp = await fetch('/api/learning/rules');
+      if (resp.ok) {
+        const data = await resp.json();
+        const badge = document.getElementById('topLearnedCount');
+        if (badge) badge.textContent = data.active_count || 0;
+      }
+    } catch (e) {}
+  }
+
+  async function openLearningModal() {
+    document.getElementById('learningModal').classList.add('open');
+    document.getElementById('learnModalStatus').textContent = '';
+    await loadLearningRules();
+  }
+
+  function closeLearningModal() {
+    document.getElementById('learningModal').classList.remove('open');
+  }
+
+  async function loadLearningRules() {
+    const resp = await fetch('/api/learning/rules');
+    if (!resp.ok) return;
+    const data = await resp.json();
+    renderLearningPayload(data);
+  }
+
+  function renderLearningPayload(data) {
+    document.getElementById('topLearnedCount').textContent = data.active_count || 0;
+    document.getElementById('learnActiveCount').textContent = data.active_count || 0;
+    document.getElementById('learnPendingCount').textContent = data.learning_count || 0;
+
+    const sel = document.getElementById('learningThresholdSelect');
+    const thStr = String(data.threshold || 3);
+    if (![...sel.options].some(o => o.value === thStr)) {
+      const opt = document.createElement('option');
+      opt.value = thStr;
+      opt.textContent = `${thStr} 次`;
+      sel.appendChild(opt);
+    }
+    sel.value = thStr;
+
+    const tbody = document.getElementById('learningTableBody');
+    const rules = data.rules || [];
+    if (rules.length === 0) {
+      tbody.innerHTML = `
+        <tr>
+          <td colspan="6" style="text-align:center; padding:45px 20px; color:var(--muted);">
+            暂无自学习记录。当您在右侧「⚠️ 待人工确认项」中点击 <b>✔️ 确认准入控制计划</b> 或 <b>✖️ 驳回剔除</b> 时，系统将自动在此追踪学习进度，满 ${data.threshold} 次自动改写规则！
+          </td>
+        </tr>
+      `;
+      return;
+    }
+
+    tbody.innerHTML = rules.map(r => {
+      const isApprove = r.action === 'approve';
+      const cnt = isApprove ? r.approve_count : r.reject_count;
+      const th = data.threshold || 3;
+      const statusBadge = r.is_active
+        ? `<span class="badge badge-high">⚡ 已生效 (${cnt}/${th}次)</span>`
+        : `<span class="badge badge-med">👀 观察中 (${cnt}/${th}次)</span>`;
+      const actionBadge = isApprove
+        ? `<span class="badge" style="background:#dcfce7; color:#166534;">✔️ 自动准入</span>`
+        : `<span class="badge" style="background:#fee2e2; color:#991b1b;">✖️ 自动剔除</span>`;
+
+      return `
+        <tr style="${r.is_active ? 'background:#f0fdf4;' : ''}">
+          <td><span class="badge badge-cat">${escapeHtml(r.standard_category)}</span></td>
+          <td style="font-weight:600;">${escapeHtml(r.characteristic_name)}</td>
+          <td>${actionBadge}</td>
+          <td>${statusBadge}</td>
+          <td>
+            ${isApprove ? `
+              <div style="display:grid; grid-template-columns: 1fr 1fr; gap:6px;">
+                <div>
+                  <span style="font-size:10.5px; color:var(--muted);">检查方法:</span>
+                  <input type="text" class="form-control" style="font-size:12px; padding:4px 7px;" id="learnMethod_${r.id}" value="${escapeHtml(r.learned_method)}" />
+                </div>
+                <div>
+                  <span style="font-size:10.5px; color:var(--muted);">判定准则:</span>
+                  <input type="text" class="form-control" style="font-size:12px; padding:4px 7px;" id="learnCriteria_${r.id}" value="${escapeHtml(r.learned_criteria)}" />
+                </div>
+              </div>
+            ` : `<span style="font-size:12px; color:var(--muted);">匹配该特性时自动从提取结果中静默过滤剔除</span>`}
+          </td>
+          <td>
+            <div style="display:flex; gap:5px; flex-wrap:wrap;">
+              ${r.is_active
+                ? `<button type="button" class="btn-sm" style="background:#fef3c7; color:#92400e; padding:3px 7px; font-size:11.5px;" onclick="toggleLearnedRuleActive(${r.id}, false)">⏸️ 暂停</button>`
+                : `<button type="button" class="btn-sm" style="background:#dcfce7; color:#166534; padding:3px 7px; font-size:11.5px;" onclick="toggleLearnedRuleActive(${r.id}, true)" title="无需等满次数，立即作为正式规则生效">⚡ 立即生效</button>`
+              }
+              ${isApprove ? `<button type="button" class="btn-sm" style="background:#eff6ff; color:#1d4ed8; padding:3px 7px; font-size:11.5px;" onclick="saveLearnedRuleEdits(${r.id})">💾 保存</button>` : ''}
+              <button type="button" class="btn-sm" style="background:#fee2e2; color:#dc2626; padding:3px 7px; font-size:11.5px;" onclick="deleteLearnedRule(${r.id}, '${escapeHtml(r.characteristic_name)}')">🗑️</button>
+            </div>
+          </td>
+        </tr>
+      `;
+    }).join('');
+  }
+
+  async function updateLearningThreshold() {
+    const val = parseInt(document.getElementById('learningThresholdSelect').value, 10) || 3;
+    const resp = await fetch('/api/learning/settings', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ threshold: val })
+    });
+    if (resp.ok) {
+      const data = await resp.json();
+      renderLearningPayload(data);
+      document.getElementById('learnModalStatus').textContent = `✅ 阈值已更新为 ${val} 次`;
+    }
+  }
+
+  async function toggleLearnedRuleActive(ruleId, targetActive) {
+    const methodEl = document.getElementById(`learnMethod_${ruleId}`);
+    const criteriaEl = document.getElementById(`learnCriteria_${ruleId}`);
+    const payload = { is_active: targetActive };
+    if (methodEl) payload.learned_method = methodEl.value;
+    if (criteriaEl) payload.learned_criteria = criteriaEl.value;
+
+    const resp = await fetch(`/api/learning/rules/${ruleId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    if (resp.ok) {
+      const data = await resp.json();
+      renderLearningPayload(data.learning);
+      document.getElementById('learnModalStatus').textContent = targetActive ? '⚡ 规则已立即升格生效！' : '⏸️ 规则已暂停';
+    }
+  }
+
+  async function saveLearnedRuleEdits(ruleId) {
+    const methodEl = document.getElementById(`learnMethod_${ruleId}`);
+    const criteriaEl = document.getElementById(`learnCriteria_${ruleId}`);
+    const resp = await fetch(`/api/learning/rules/${ruleId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        learned_method: methodEl ? methodEl.value : '',
+        learned_criteria: criteriaEl ? criteriaEl.value : '',
+      })
+    });
+    if (resp.ok) {
+      const data = await resp.json();
+      renderLearningPayload(data.learning);
+      document.getElementById('learnModalStatus').textContent = '💾 已保存规则修订！';
+    }
+  }
+
+  async function deleteLearnedRule(ruleId, name) {
+    if (!confirm(`确定要删除「${name}」的自学习规则及累计计数吗？`)) return;
+    const resp = await fetch(`/api/learning/rules/${ruleId}`, { method: 'DELETE' });
+    if (resp.ok) {
+      const data = await resp.json();
+      renderLearningPayload(data.learning);
+      document.getElementById('learnModalStatus').textContent = `🗑️ 已删除「${name}」`;
+    }
+  }
+
+  async function resetAllLearnedRules() {
+    if (!confirm('确定要清空全部自学习规则与历史累计计数吗？')) return;
+    const resp = await fetch('/api/learning/reset', { method: 'POST' });
+    if (resp.ok) {
+      const data = await resp.json();
+      renderLearningPayload(data);
+      document.getElementById('learnModalStatus').textContent = '🗑️ 已清空全部自学习记录';
+    }
   }
 
   function escapeHtml(str) {

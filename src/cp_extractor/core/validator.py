@@ -12,6 +12,7 @@ from ..schemas.models import (
     ValidationReport,
 )
 from .lexicon_db import LexiconDB
+from .feedback_learner import FeedbackRuleLearner
 
 
 class QualityGateValidator:
@@ -36,8 +37,13 @@ class QualityGateValidator:
         "ppm", "lx", "r/min", "⎯", "⏥", "⌯", "⌭", "⌒", "⌓", "⊥", "∥", "∠", "⌖", "◎", "≡", "↗", "⌕", "Ø", "φ"
     ]
 
-    def __init__(self, lexicon_db: Optional[LexiconDB] = None):
+    def __init__(
+        self,
+        lexicon_db: Optional[LexiconDB] = None,
+        feedback_learner: Optional[FeedbackRuleLearner] = None,
+    ):
         self.lexicon_db = lexicon_db or LexiconDB()
+        self.feedback_learner = feedback_learner or FeedbackRuleLearner(db_path=self.lexicon_db.db_path)
 
     @staticmethod
     def _contains_term(text: str, term: str) -> bool:
@@ -221,6 +227,48 @@ class QualityGateValidator:
                 report.missing_clause_or_quote.append(msg)
                 item.notes = item.notes or "单边公差被改写为双边公差 (±)，请核对原文恢复为单边公差格式"
                 needs_review = True
+
+            # 7. 自学习历史人工复核规则 (FeedbackRuleLearner) 自动接管：
+            # 若质量工程师已累计多次将该项手工确认准入 (approve) 或驳回 (reject) 达到设定阈值，自动执行放行或剔除
+            matched_rule = None
+            try:
+                matched_rule = self.feedback_learner.match_active_rule(
+                    package.standard_info.standard_category,
+                    item.characteristic_name,
+                )
+            except Exception:
+                matched_rule = None
+
+            if matched_rule:
+                if matched_rule["action"] == "reject":
+                    report.suggestions.append(
+                        f"🧠 自学习规则已自动剔除「{item.characteristic_name}」（历史人工累计驳回 {matched_rule['reject_count']} 次）。"
+                    )
+                    continue
+                elif matched_rule["action"] == "approve":
+                    if matched_rule["learned_specification"] and (
+                        "待" in item.specification or "未明确" in item.specification or "仅供参考" in item.specification
+                    ):
+                        item.specification = matched_rule["learned_specification"]
+                    if matched_rule["learned_method"] and (
+                        item.inspection_method in ("待确认", "待定", "") or "待" in item.inspection_method
+                    ):
+                        item.inspection_method = matched_rule["learned_method"]
+                    if matched_rule["learned_criteria"] and (
+                        item.acceptance_criteria in ("待确认", "待定", "") or "待" in item.acceptance_criteria
+                    ):
+                        item.acceptance_criteria = matched_rule["learned_criteria"]
+
+                    item.confidence = ConfidenceLevel.HIGH
+                    needs_review = False
+                    item.notes = f"🧠 自学习规则已自动准入（历史人工累计确认 {matched_rule['approve_count']} 次）"
+                    # 移除因原始低置信度记录的告警
+                    report.unmarked_low_confidence = [
+                        m for m in report.unmarked_low_confidence if not m.startswith(item_tag)
+                    ]
+                    report.suggestions.append(
+                        f"🧠 自学习规则已将「{item.characteristic_name}」自动准入控制计划（历史人工确认 {matched_rule['approve_count']} 次）。"
+                    )
 
             # 更新 items
             item.needs_human_review = needs_review

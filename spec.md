@@ -1,6 +1,6 @@
 # 标准→控制计划检查项提取系统 规格说明书 (Living Specification)
 
-版本：v1.2
+版本：v1.4
 日期：2026-11-06
 状态：已生效（与代码库通过 `tests/test_spec_consistency.py` 自动化契约绑定）
 
@@ -75,8 +75,9 @@ Web 工作台人工审核（支持条款号一键跳转 PDF 对应页码 #page=N
 | 类别识别模块 | `src/cp_extractor/core/classifier.py` | 识别标准类别（`公差/尺寸标准`、`材料标准`、`工艺标准`、`外观/性能标准`），路由至对应插件 |
 | 提示词组装模块 | `src/cp_extractor/core/prompt_builder.py` | 组装基础模板与类别插件，支持 Web 端在线编辑、版本解析与一键恢复出厂默认 |
 | 核心提取流水线 | `src/cp_extractor/core/extractor.py` | 负责长文档按章节语义分块、页码上下文承接、跨块去重、门禁调用与二次自纠错编排 |
-| LLM 客户端模块 | `src/cp_extractor/core/llm_client.py` | 封装 DeepSeek API（`temperature=0.0`）、顺序锚定 Schema 约束及 `refine_items_with_feedback` 打回重提 |
-| 质量门禁校验器 | `src/cp_extractor/core/validator.py` | 执行 6 项确定性门禁校验、原文防幻觉核对、PDF 页码反查（`resolve_source_page`）与待确认分流 |
+| 多模型客户端模块 | `src/cp_extractor/core/llm_client.py` | 封装通用多后端大模型客户端（`LLMClient`，支持 `deepseek`、`qwen`、`zhipu`、`kimi`、`siliconflow`、`openai`、`ollama`、`custom` 一键切换、连通性测试、`.env` 持久化与 `refine_items_with_feedback` 打回重提） |
+| 质量门禁校验器 | `src/cp_extractor/core/validator.py` | 执行 6 项确定性门禁校验、原文防幻觉核对、PDF 页码反查（`resolve_source_page`）、自学习规则自动放行/剔除与待确认分流 |
+| 自学习规则引擎 | `src/cp_extractor/core/feedback_learner.py` | 基于 SQLite (`learned_rules` 表) 观察记录工程师手工准入/驳回决策，累计达阈值 $N$ 次后自动更改门禁直通规则、动态注入提示词指令并扩充词库 |
 | 多语言校验词库 | `src/cp_extractor/core/lexicon_db.py` | 基于 SQLite (`data/lexicon.db`) 管理中/英/日/德多语种量检具（`method`）、单位（`unit`）、判据（`criteria`）词条 |
 | 输出映射导出器 | `src/cp_extractor/core/mapper.py` | 将审核后数据导出为控制计划 Excel（`.xlsx`），自动写入条款 `#page=N` 蓝色超链接与多工作表报告 |
 | Web 服务与工作台 | `src/cp_extractor/api/app.py` | 提供 REST API、源 PDF 在线预览、人工确认门禁复核、提示词配置中心与词库管理界面 |
@@ -139,7 +140,7 @@ Web 工作台人工审核（支持条款号一键跳转 PDF 对应页码 #page=N
   "standard_info": {
     "file_name": "example_standard.pdf",
     "standard_category": "公差/尺寸标准",
-    "template_version": "v1.2",
+    "template_version": "v1.4",
     "source_file_url": "/api/files/example_standard.pdf"
   },
   "check_items": [],
@@ -182,6 +183,8 @@ Web 工作台人工审核（支持条款号一键跳转 PDF 对应页码 #page=N
    - 当 `source_quote` 含有单边公差（如 `+0.05/-0.00`）而 `specification` 被改写为对称公差 `±` 时，立即判定违反逐字保真原则并拦截报警。
 7. **二次语义自纠错闭环 (`refine_items_with_feedback`)**：
    - 当首次提取触发硬性偏差（条款/原文失配、单边公差篡改、方法与判据混淆）时，流水线自动调用 `validation_template.md` 携带错误报告打回 LLM 定向重提一次，二次过检仍未通过的项安全保留在 `pending_review_items` 交由人工复核。
+8. **人工复核反馈自学习门禁直通/自动剔除 (`FeedbackRuleLearner`)**：
+   - 系统持续记录工程师在 `pending_review_items` 上的手工确认准入（`approve`）与驳回剔除（`reject`）行为；当同一检查项名称累计确认/驳回达到设定阈值 $N$ 次（默认 `3` 次）且方向一致时，自动晋升为激活的自学习规则，在后续提取中执行门禁自动直通（含检查方法与判据回填）或自动静默剔除，并同步向提取 Prompt 注入历史经验指令。
 
 ---
 
@@ -192,6 +195,8 @@ Web 工作台人工审核（支持条款号一键跳转 PDF 对应页码 #page=N
 3. **提示词动态组装与在线治理**：按标准类别拼接 `base_template.md` 与对应插件，支持在 Web 工作台实时修改提示词与管理 SQLite 多语言校验词库。
 4. **条款页码定位与一键跳转**：自动计算每条检查项对应的 `source_page`，在 Web 界面渲染为可点击胶囊（`📄 条款号 (P.页码) ↗`），并在导出的 `.xlsx` 报表中同步生成 `#page=N` 超链接。
 5. **人工确认门禁复核工作台**：工程师可在 Web 端对 `pending_review_items` 在线编辑修正、确认准入（移入 `check_items`）或驳回剔除。
+6. **多后端大模型一键切换与参数自适应**：Web 端与 API 支持在 8 类云端/本地大模型服务商间一键切换，支持调节采样温度 `temperature`（`0.0 ~ 2.0`），并针对 `kimi-k2.6` 等固定温度模型自动容错适配。
+7. **自学习规则中心可视化治理**：提供 `🧠 自学习规则中心` 弹窗与 REST API，支持实时调整自学习触发阈值 $N$、暂停/恢复单条自学习规则或一键清空重置。
 
 ---
 
@@ -208,7 +213,9 @@ Web 工作台人工审核（支持条款号一键跳转 PDF 对应页码 #page=N
 |---|---|---|---|
 | `v1.0` | 2026-11-05 | 归档 | 初始规格说明书草案：确立公共基础模板 + 四类专用插件 + 后处理校验 + 人工确认门禁架构与基础 JSON Schema |
 | `v1.1` | 2026-11-05 | 归档 | 新增 Product/Process CTQ 双维体系、14 类 GD&T 符号库、单边公差防篡改与括号参考尺寸拦截门禁、二次语义自纠错闭环及长文档章节语义分块 |
-| `v1.2` | 2026-11-06 | 已生效 | 1. `CheckItem` 新增 `source_page`，`StandardInfo` 新增 `source_file_url`，支持 Web 与 Excel 条款 `#page=N` 超链接跳转；<br>2. 新增 SQLite 多语言词库 (`LexiconDB`) 与剪贴板截图 Vision OCR 解析；<br>3. 建立 `tests/test_spec_consistency.py` 自动化契约测试，实现 `spec.md` 与代码库双向绑定 |
+| `v1.2` | 2026-11-06 | 归档 | 1. `CheckItem` 新增 `source_page`，`StandardInfo` 新增 `source_file_url`，支持 Web 与 Excel 条款 `#page=N` 超链接跳转；<br>2. 新增 SQLite 多语言词库 (`LexiconDB`) 与剪贴板截图 Vision OCR 解析；<br>3. 建立 `tests/test_spec_consistency.py` 自动化契约测试，实现 `spec.md` 与代码库双向绑定 |
+| `v1.3` | 2026-11-06 | 归档 | 新增多后端大模型一键切换架构（`LLMClient` / `LLM_PROVIDERS`），内置支持 `deepseek`（DeepSeek）、`qwen`（通义千问）、`zhipu`（智谱 GLM）、`kimi`（月之暗面）、`siliconflow`（硅基流动）、`openai`（OpenAI）、`ollama`（本地私有化免 Key）及 `custom`（自定义接口），支持按厂商独立保存配置、采样温度 (`temperature`) 自适应调节、在线连通性测试与一键同步写入服务端 `.env` |
+| `v1.4` | 2026-11-06 | 已生效 | 新增人工复核反馈自学习引擎（`FeedbackRuleLearner`，`src/cp_extractor/core/feedback_learner.py`）：自动观察工程师在待确认项上的手工准入/驳回操作，累计达到可配置阈值 $N$ 次后，自动生成门禁直通/剔除规则、自动回填检查方法与判据、动态注入提示词并扩充 SQLite 量检具词库 |
 
 ---
 

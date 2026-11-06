@@ -21,8 +21,16 @@ from pydantic import BaseModel, Field
 
 from ..core.classifier import StandardClassifier
 from ..core.extractor import StandardExtractorPipeline
+from ..core.feedback_learner import FeedbackRuleLearner
 from ..core.lexicon_db import LexiconDB
-from ..core.llm_client import DeepSeekClient, JSON_SCHEMA_INSTRUCTION
+from ..core.llm_client import (
+    DeepSeekClient,
+    JSON_SCHEMA_INSTRUCTION,
+    LLMClient,
+    LLM_PROVIDERS,
+    get_providers_status,
+    persist_llm_config_to_env,
+)
 from ..core.mapper import ControlPlanExcelMapper
 from ..core.parser import DocumentParser
 from ..core.prompt_builder import PromptBuilder
@@ -51,10 +59,23 @@ class ExtractRequest(BaseModel):
     file_name: str = Field(default="custom_standard.md")
     content: str
     manual_category: Optional[str] = None
-    engine_mode: str = Field(default="auto", description="deepseek | rule | auto")
+    engine_mode: str = Field(default="auto", description="llm | deepseek | rule | auto")
+    llm_provider: Optional[str] = None
+    llm_api_key: Optional[str] = None
+    llm_base_url: Optional[str] = None
+    llm_model: Optional[str] = None
+    llm_temperature: Optional[float] = None
     deepseek_api_key: Optional[str] = None
     deepseek_base_url: Optional[str] = None
     deepseek_model: Optional[str] = None
+
+
+class LLMConfigActionRequest(BaseModel):
+    provider: str = Field(default="deepseek", description="大模型服务商标识: deepseek | qwen | zhipu | kimi | siliconflow | openai | ollama | custom")
+    api_key: Optional[str] = Field(default=None, description="API Key（若留空则尝试使用服务端 .env 已配置的 Key）")
+    base_url: str = Field(..., description="OpenAI 兼容接口 Base URL")
+    model: str = Field(..., description="模型名称")
+    temperature: Optional[float] = Field(default=0.0, ge=0.0, le=2.0, description="采样温度 (0.0 ~ 2.0)")
 
 
 class ReviewUpdateRequest(BaseModel):
@@ -85,6 +106,18 @@ class LexiconUpdateRequest(BaseModel):
 
 class LexiconResetRequest(BaseModel):
     category: Optional[str] = Field(default="all", description="要重置的分类: method | unit | criteria | all")
+
+
+class LearningSettingsRequest(BaseModel):
+    threshold: int = Field(..., ge=1, le=20, description="自动升格为正式规则所需的手工确认/驳回累计次数阈值")
+
+
+class LearnedRuleUpdateRequest(BaseModel):
+    action: Optional[str] = Field(default=None, description="approve | reject")
+    is_active: Optional[bool] = Field(default=None, description="是否立即启用该规则")
+    learned_specification: Optional[str] = Field(default=None, description="自动套用的规范/公差")
+    learned_method: Optional[str] = Field(default=None, description="自动套用的检查方法")
+    learned_criteria: Optional[str] = Field(default=None, description="自动套用的判定准则")
 
 
 SAMPLE_META = {
@@ -159,15 +192,50 @@ def index():
 
 @app.get("/api/config")
 def get_config():
-    from dotenv import load_dotenv
-    load_dotenv(override=True)
-    env_key = os.getenv("DEEPSEEK_API_KEY", "").strip()
-    return {
-        "has_env_key": bool(env_key),
-        "masked_env_key": f"{env_key[:6]}...{env_key[-4:]}" if len(env_key) > 10 else "",
-        "default_base_url": os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com"),
-        "default_model": os.getenv("DEEPSEEK_MODEL", "deepseek-chat"),
-    }
+    return get_providers_status()
+
+
+@app.get("/api/llm/providers")
+def list_llm_providers():
+    """获取所有内置支持的大模型厂商预设列表与当前环境变量状态"""
+    return get_providers_status()
+
+
+@app.post("/api/llm/test")
+def test_llm_connection(req: LLMConfigActionRequest):
+    """在线测试所选大模型厂商、Base URL、Model、Temperature 与 API Key 的连通性"""
+    client = LLMClient(
+        provider=req.provider,
+        api_key=req.api_key,
+        base_url=req.base_url,
+        model=req.model,
+        temperature=req.temperature,
+    )
+    try:
+        return client.test_connection()
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/api/llm/save-env")
+def save_llm_config_to_env(req: LLMConfigActionRequest):
+    """将当前大模型厂商配置持久化写入服务端 .env 文件"""
+    env_path = ROOT_DIR / ".env"
+    try:
+        persist_llm_config_to_env(
+            env_path=env_path,
+            provider=req.provider,
+            api_key=req.api_key,
+            base_url=req.base_url,
+            model=req.model,
+            temperature=req.temperature,
+        )
+        return {
+            "saved": True,
+            "config": get_providers_status(),
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"写入 .env 失败: {e}")
 
 
 @app.get("/api/samples")
@@ -224,15 +292,20 @@ async def upload_standard(file: UploadFile = File(...)):
 async def extract_from_uploaded_document(
     file: UploadFile = File(...),
     category: str = Form(default="tolerance"),
+    llm_provider: Optional[str] = Form(default=None),
+    llm_api_key: Optional[str] = Form(default=None),
+    llm_base_url: Optional[str] = Form(default=None),
+    llm_model: Optional[str] = Form(default=None),
+    llm_temperature: Optional[float] = Form(default=None),
     deepseek_api_key: Optional[str] = Form(default=None),
     deepseek_base_url: Optional[str] = Form(default=None),
     deepseek_model: Optional[str] = Form(default=None),
 ):
     """
     核心三步闭环接口：
-    1. 接收上传的 PDF / Word / Markdown 标准文件并解析正文
+    1. 接收上传的 PDF / Word / Markdown / 截图标准文件并解析正文
     2. 根据所选标准类别组装 (公共基础模板 + 类别专用插件)
-    3. 调用 DeepSeek LLM 提取检查项 -> 后处理门禁校验 -> 生成 Excel 与 JSON
+    3. 调用所选后端大模型 (DeepSeek / Qwen / GLM / Kimi / OpenAI / Ollama 等) 提取检查项 -> 后处理门禁校验 -> 生成 Excel 与 JSON
     """
     raw = await file.read()
     if not raw:
@@ -251,19 +324,21 @@ async def extract_from_uploaded_document(
 
     source_file_url = _persist_uploaded_source(file.filename or "standard.pdf", raw)
 
-    ds_client = DeepSeekClient(
-        api_key=deepseek_api_key,
-        base_url=deepseek_base_url,
-        model=deepseek_model,
+    llm_client = LLMClient(
+        provider=llm_provider,
+        api_key=llm_api_key or deepseek_api_key,
+        base_url=llm_base_url or deepseek_base_url,
+        model=llm_model or deepseek_model,
+        temperature=llm_temperature,
     )
-    if not ds_client.is_configured:
+    if not llm_client.is_configured:
         raise HTTPException(
             status_code=400,
-            detail="未检测到 DeepSeek API Key。请点击右上角【DeepSeek API 配置】填入你的 Key，或在 .env 文件中配置 DEEPSEEK_API_KEY。",
+            detail=f"未检测到 {llm_client.provider_name} API Key。请点击右上角【大模型 API 配置】填入你的 Key，或在 .env 文件中配置。",
         )
 
     try:
-        pipeline = StandardExtractorPipeline(llm_callable=ds_client.extract_check_items_json)
+        pipeline = StandardExtractorPipeline(llm_callable=llm_client.extract_check_items_json)
         package = pipeline.run(
             file_name=file.filename or "standard.pdf",
             content=parsed_text,
@@ -272,7 +347,7 @@ async def extract_from_uploaded_document(
         package.standard_info.source_file_url = source_file_url
         downloads = _persist_artifacts(package)
         return {
-            "engine_used": f"DeepSeek ({ds_client.model})",
+            "engine_used": llm_client.display_label,
             "parsed_length": len(parsed_text),
             "parsed_preview": parsed_text[:2000],
             "source_file_url": source_file_url,
@@ -420,27 +495,29 @@ def run_extraction(req: ExtractRequest):
     if not req.content.strip():
         raise HTTPException(status_code=400, detail="标准文本内容不能为空")
 
-    ds_client = DeepSeekClient(
-        api_key=req.deepseek_api_key,
-        base_url=req.deepseek_base_url,
-        model=req.deepseek_model,
+    llm_client = LLMClient(
+        provider=req.llm_provider,
+        api_key=req.llm_api_key or req.deepseek_api_key,
+        base_url=req.llm_base_url or req.deepseek_base_url,
+        model=req.llm_model or req.deepseek_model,
+        temperature=req.llm_temperature,
     )
 
-    use_deepseek = False
-    if req.engine_mode == "deepseek":
-        if not ds_client.is_configured:
+    use_llm = False
+    if req.engine_mode in ("deepseek", "llm"):
+        if not llm_client.is_configured:
             raise HTTPException(
                 status_code=400,
-                detail="已选择 DeepSeek 模式，但未检测到 API Key。请在右上角【DeepSeek 配置】中填入 API Key 或在 .env 中设置 DEEPSEEK_API_KEY。",
+                detail=f"已选择大模型模式，但未检测到 {llm_client.provider_name} API Key。请在右上角【大模型 API 配置】中填入 API Key 或在 .env 中设置。",
             )
-        use_deepseek = True
-    elif req.engine_mode == "auto" and ds_client.is_configured:
-        use_deepseek = True
+        use_llm = True
+    elif req.engine_mode == "auto" and llm_client.is_configured:
+        use_llm = True
 
     try:
-        if use_deepseek:
-            pipeline = StandardExtractorPipeline(llm_callable=ds_client.extract_check_items_json)
-            engine_label = f"DeepSeek API ({ds_client.model})"
+        if use_llm:
+            pipeline = StandardExtractorPipeline(llm_callable=llm_client.extract_check_items_json)
+            engine_label = f"{llm_client.provider_short_name} API ({llm_client.model})"
         else:
             pipeline = StandardExtractorPipeline(llm_callable=None)
             engine_label = "内置结构化基准引擎 (离线免Key)"
@@ -462,30 +539,101 @@ def run_extraction(req: ExtractRequest):
 
 @app.post("/api/approve-review")
 def approve_or_reject_review_item(req: ReviewUpdateRequest):
-    """人工审核门禁交互：质量工程师修改并准入待确认项，或驳回剔除，并同步刷新 Excel"""
+    """人工审核门禁交互：质量工程师修改并准入待确认项，或驳回剔除，同时记录至自学习规则引擎并同步刷新 Excel"""
     try:
         package = ExtractionPackage.model_validate(req.package)
         if req.review_index < 0 or req.review_index >= len(package.pending_review_items):
             raise HTTPException(status_code=400, detail="待审核项索引越界")
 
-        target_item = package.pending_review_items.pop(req.review_index)
+        orig_item = package.pending_review_items.pop(req.review_index)
+        final_item = orig_item
 
         if req.action == "approve":
             if req.updated_item:
-                target_item = CheckItem.model_validate(req.updated_item)
-            target_item.needs_human_review = False
-            package.check_items.append(target_item)
+                final_item = CheckItem.model_validate(req.updated_item)
+            final_item.needs_human_review = False
+            package.check_items.append(final_item)
+
+        # 记录质量工程师的人工决策至自学习引擎（满 N 次自动改写门禁与提示词规则）
+        learner = FeedbackRuleLearner()
+        learning_event = learner.record_review_decision(
+            standard_category=package.standard_info.standard_category,
+            original_item=orig_item,
+            action=req.action,
+            updated_item=final_item if req.action == "approve" else None,
+        )
 
         package.refresh_summary()
         downloads = _persist_artifacts(package)
         return {
             "package": package.model_dump(mode="json"),
+            "learning_event": learning_event,
+            "learning_summary": learner.get_full_learning_payload(),
             **downloads,
         }
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"审核操作失败: {e}")
+
+
+@app.get("/api/learning/rules")
+def list_learned_rules():
+    """查询人工复核自学习规则列表、学习中候选进度与当前触发阈值"""
+    learner = FeedbackRuleLearner()
+    return learner.get_full_learning_payload()
+
+
+@app.put("/api/learning/settings")
+def update_learning_settings(req: LearningSettingsRequest):
+    """修改自动更改规则的累计次数阈值（如 2 次、3 次、5 次）"""
+    learner = FeedbackRuleLearner()
+    learner.set_threshold(req.threshold)
+    return learner.get_full_learning_payload()
+
+
+@app.put("/api/learning/rules/{rule_id}")
+def update_learned_rule(rule_id: int, req: LearnedRuleUpdateRequest):
+    """手动启用/暂停某条自学习规则，或修改其自动回填的检查方法与判定准则"""
+    learner = FeedbackRuleLearner()
+    try:
+        updated = learner.update_rule(
+            rule_id=rule_id,
+            action=req.action,
+            is_active=req.is_active,
+            learned_specification=req.learned_specification,
+            learned_method=req.learned_method,
+            learned_criteria=req.learned_criteria,
+        )
+        return {
+            "updated": updated,
+            "learning": learner.get_full_learning_payload(),
+        }
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"更新自学习规则失败: {e}")
+
+
+@app.delete("/api/learning/rules/{rule_id}")
+def delete_learned_rule(rule_id: int):
+    """删除并回滚某条自学习规则"""
+    learner = FeedbackRuleLearner()
+    deleted = learner.delete_rule(rule_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail=f"自学习规则 ID={rule_id} 不存在")
+    return {
+        "deleted_id": rule_id,
+        "learning": learner.get_full_learning_payload(),
+    }
+
+
+@app.post("/api/learning/reset")
+def reset_all_learned_rules():
+    """清空所有自学习规则与历史计数"""
+    learner = FeedbackRuleLearner()
+    learner.reset_all_rules()
+    return learner.get_full_learning_payload()
 
 
 @app.get("/api/source/{filename}")

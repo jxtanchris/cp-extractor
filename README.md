@@ -37,6 +37,18 @@
 6. **🗂️ SQLite 多语言量检具/单位/判据校验词库 & 可视化配置工作台**
    - **独立 SQLite 多语种词库 (`data/lexicon.db`)**：内置 **126 组主词条（展开同义词后覆盖 526 个 🇨🇳中文 / 🇺🇸英文 / 🇯🇵日文 / 🇩🇪德文 / 🔣通用符号 专业术语）**，涵盖量检具与试验方法（`method`）、物理单位与 GD&T 符号（`unit`）、合格判据特征词（`criteria`）三大分类，实时作用于 `QualityGateValidator` 后处理门禁。
    - **Web 界面在线管理**：支持按中/英/日/德语种胶囊筛选、实时检索、批量新增/编辑多语言同义词对照及一键恢复出厂默认；同时内置提示词配置中心与人工确认门禁在线复核工作台。
+7. **🤖 多后端大模型（Multi-Provider LLM）一键切换与在线连通性测试**
+   - **内置 8 大主流云端 + 本地大模型预设**：支持一键切换 **DeepSeek**（`deepseek-chat` / `deepseek-reasoner`）、**通义千问 Qwen**（`qwen-plus` / `qwen-max` / `qwq-32b`）、**智谱 GLM**（`glm-4-plus` / `glm-4-flash`）、**月之暗面 Kimi**（`moonshot-v1-32k` / `kimi-k2.6` / `kimi-k2.5`）、**硅基流动 SiliconFlow**、**OpenAI**（`gpt-4o` / `gpt-4.1` / `o3-mini`）、**本地 Ollama / vLLM**（私有化免 Key 即开即用）及自定义接口。
+   - **采样温度 (`Temperature`) 可视化调节与智能适配**：支持 `0.0 ~ 2.0` 滑块与快捷预设调节；针对强制要求 `temperature=1` 的推理模型（如 `kimi-k2.6` / `kimi-k2.5` / `o1` / `o3`）自动适配并具备 `HTTP 400` 自动回退重试能力。
+   - **独立记忆、连通性测试与 `.env` 同步**：各厂商配置按卡片独立记忆，支持一键发送探针测试响应耗时（ms）并同步持久化写入服务端 `.env`。
+8. **🧠 人工复核自学习与规则自动演进引擎 (`FeedbackRuleLearner`)**
+   - **复核轨迹自动观察**：系统自动记录工程师在「⚠️ 待人工确认项」上的每一次手工决策（`✔️ 确认准入` 或 `✖️ 驳回剔除`）及修订内容。
+   - **满 $N$ 次自动改规则（三层联动）**：当同一项目被累计手工准入（或驳回）达到设定阈值 $N$ 次（默认 `3` 次，可在界面自由调为 `1/2/3/5` 次或点击「⚡ 立即生效」）后，系统自动：
+     1. **门禁层直通放行/静默剔除**：后续提取遇到该项时自动放行进入正式控制计划清单（或自动剔除），并自动回填工程师习惯的检查方法与判定准则；
+     2. **提示词层源头注入**：自动将该规则作为 Few-Shot 指令动态追加至对应类别的提取提示词中；
+     3. **词库层自动扩充**：自动将工程师新填写的量检具名称收录进 SQLite `LexiconDB` 校验词库。
+9. **📐 Living Spec 规格与代码双向契约绑定 (`spec.md` + `test_spec_consistency.py`)**
+   - 通过 `pytest` 契约测试与 Git `pre-commit` 钩子自动解析 `spec.md` 中的字段表格、JSON Schema、枚举定义、模板与大模型列表，与代码库做 100% 双向断言比对，彻底杜绝文档与代码脱节。
 
 ---
 
@@ -46,14 +58,17 @@
 flowchart LR
     A["📄 上传标准文档 / Cmd+V 粘贴截图"] --> B["🔍 多模态解析器 DocumentParser\n(PDF表格还原 / Word表格 / Vision OCR)"]
     B --> C["🏷️ 标准分类与章节语义分块\n(公差 / 材料 / 工艺 / 外观性能)"]
-    C --> D["📝 提示词组装器 PromptBuilder\n(公共基础模板 + Few-Shot插件 + 顺序锚定Schema)"]
-    D --> E["🤖 DeepSeek LLM 提取引擎\n(temperature=0.0 确定性提取)"]
-    E --> F["🛡️ 后处理质量门禁 QualityGateValidator\n(页码定位 / 原文溯源 / 单边公差与方法混淆检测)"]
+    C --> D["📝 提示词组装器 PromptBuilder\n(基础模板 + 专用插件 + 自学习规则)"]
+    D --> E["🤖 多后端 LLM 提取引擎\n(DeepSeek / Qwen / GLM / Kimi / OpenAI / Ollama)"]
+    E --> F["🛡️ 后处理质量门禁 QualityGateValidator\n(页码定位 / 原文溯源 / 自学习直通放行)"]
     F -->|硬性偏差自动打回| R["🔄 二次语义自纠错闭环\n(refine_items_with_feedback)"]
     R --> F
-    F -->|通过门禁| G["✅ 正式控制计划检查项清单\n(支持条款号一键跳转 PDF #page=N)"]
+    F -->|通过门禁 / 自学习自动准入| G["✅ 正式控制计划检查项清单\n(支持条款号一键跳转 PDF #page=N)"]
     F -->|触发门禁| H["⚠️ 待人工确认项 (Web 在线复核修正)"]
     H -->|工程师确认准入| G
+    H -->|复核轨迹累计满 N 次| L["🧠 自学习规则引擎 FeedbackRuleLearner\n(自动改写门禁规则 / 注入提示词 / 扩充词库)"]
+    L -.->|动态注入| D
+    L -.->|自动放行/剔除| F
     G --> I["📥 导出带页码超链接的 Excel (.xlsx) & JSON"]
 ```
 
@@ -63,7 +78,7 @@ flowchart LR
 
 ```text
 CP/
-├── spec.md                         # 系统规格说明书 (v1.2 Living Spec，与代码双向契约绑定)
+├── spec.md                         # 系统规格说明书 (v1.4 Living Spec，与代码双向契约绑定)
 ├── pyproject.toml                  # Python 项目依赖与构建配置
 ├── .env.example                    # 环境变量配置模板
 ├── start_lan.sh                    # 局域网共享一键启动脚本
@@ -89,20 +104,21 @@ CP/
 │       ├── core/
 │       │   ├── classifier.py       # 标准类别自动分类器
 │       │   ├── extractor.py        # 核心提取流水线编排器 (支持章节语义分块、去重与二次自纠错)
+│       │   ├── feedback_learner.py # 人工复核反馈自学习引擎 (累计达阈值自动改写门禁与提示词规则)
 │       │   ├── lexicon_db.py       # SQLite 多语言量检具/物理单位/判定准则校验词库管理器
-│       │   ├── llm_client.py       # DeepSeek API 客户端 (零温度采样、顺序锚定与打回重提)
+│       │   ├── llm_client.py       # 多后端大模型客户端 (DeepSeek/Qwen/GLM/Kimi/OpenAI/Ollama 一键切换)
 │       │   ├── mapper.py           # 控制计划 Excel (.xlsx) 报表导出映射器 (含 #page=N 超链接)
 │       │   ├── parser.py           # 多格式文档、PDF 布局表格还原与截图 OCR 解析引擎
 │       │   ├── prompt_builder.py   # 提示词组装、在线读写与默认还原管理器
 │       │   └── validator.py        # 质量门禁、反幻觉溯源与 PDF 页码精确定位校验器
 │       └── schemas/
 │           └── models.py           # Pydantic V2 严格数据契约定义 (含 source_page & source_file_url)
-└── tests/                          # 自动化单元测试、基准回归与 Spec 契约测试套件 (22 项全链路用例)
+└── tests/                          # 自动化单元测试、基准回归与 Spec 契约测试套件 (24 项全链路用例)
     ├── benchmark_samples/          # 四大类行业标准测试样本 (.md)
-    ├── test_api_and_deepseek.py    # FastAPI 接口、人工审核闭环与提示词管理测试
+    ├── test_api_and_deepseek.py    # FastAPI 接口、多模型切换、人工复核自学习与词库管理测试
     ├── test_benchmark_regression.py# 四类标准端到端回归测试
     ├── test_extractor.py           # 数据模型、表格还原、章节分块、自纠错与 PDF 超链接单元测试
-    └── test_spec_consistency.py    # spec.md 与 Pydantic 模型/枚举/模板双向契约一致性测试
+    └── test_spec_consistency.py    # spec.md 与 Pydantic 模型/枚举/模板/大模型厂商双向契约一致性测试
 ```
 
 ---
@@ -124,20 +140,17 @@ source .venv/bin/activate
 pip install -e ".[dev]"
 ```
 
-### 2. 配置 DeepSeek API Key
+### 2. 配置后端大模型 (DeepSeek / Qwen / GLM / Kimi / OpenAI / Ollama)
 
-方式一：复制环境变量模板并填入您的 API Key：
+方式一：启动 Web 界面后，直接点击页面右上角 **「🤖 模型: ...」**（或左侧第 3 步上方的 **「🔄 切换模型」**）打开配置弹窗：
+- 一键选择服务商（DeepSeek、通义千问 Qwen、智谱 GLM、Kimi、硅基流动、OpenAI、本地 Ollama 或自定义接口）；
+- 填入 API Key、选择预设或输入自定义模型 ID、调节 `Temperature`（采样温度）；
+- 点击 **「🔌 测试模型连通性」** 验证响应耗时，勾选同步写入 `.env` 并点击 **「💾 保存并切换模型」**。
+
+方式二：复制环境变量模板并编辑 `.env` 文件：
 ```bash
 cp .env.example .env
 ```
-编辑 `.env` 文件：
-```env
-DEEPSEEK_API_KEY=sk-您的真实密钥
-DEEPSEEK_BASE_URL=https://api.deepseek.com
-DEEPSEEK_MODEL=deepseek-chat
-```
-
-方式二：启动 Web 界面后，直接点击页面右上角 **「⚡ DeepSeek API 配置」** 在浏览器中填入保存。
 
 ### 3. 启动可视化 Web 工作台
 
@@ -163,11 +176,12 @@ DEEPSEEK_MODEL=deepseek-chat
 2. **第二步：选择标准所属类别 & 调整提示词规则**
    - 选择文档对应的标准类别（公差/尺寸、材料、工艺、外观/性能）。
    - 如需调整「待人工确认」的判定松紧度，点击顶部或第二步旁的 **「⚙️ 调整提示词/确认规则」**，可一键注入宽松/严格规则并实时保存生效。
-3. **第三步：提取、条款页码溯源、人工门禁复核与导出**
-   - 点击 **「🚀 开始提取检查项」**。
+3. **第三步：切换模型、提取、人工门禁复核自学习与导出**
+   - 可在按钮上方点击 **「🔄 切换模型」** 选择当前使用的大模型，随后点击 **「🚀 开始提取检查项」**。
    - 在右侧查看「✅ 控制计划检查项清单」与「⚠️ 待人工确认项」：
      - 点击任意检查项的 **条款号胶囊链接（如 `📄 3.1 (P.1) ↗`）**，即可直接在新标签页打开原 PDF 并定位到对应页码核对原文；
-     - 对待确认拦截项在线修订并点击确认准入或驳回后，点击右上角 **「📥 导出控制计划 Excel (.xlsx)」**（导出的 Excel 同样自带 PDF 页码跳转超链接）。
+     - 对待确认拦截项在线修订并点击 **「✔️ 确认准入控制计划」** 或 **「✖️ 驳回剔除」**：系统会自动记录学习进度（累计满 $N$ 次自动生成直通/剔除规则，也可点击顶部 **「🧠 自学习规则」** 随时调整阈值或一键升格生效）；
+     - 复核完成后，点击右上角 **「📥 导出控制计划 Excel (.xlsx)」**（导出的 Excel 同样自带 PDF 页码跳转超链接）。
 
 ---
 

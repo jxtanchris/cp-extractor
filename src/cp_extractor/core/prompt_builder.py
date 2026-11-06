@@ -7,6 +7,8 @@ from pathlib import Path
 from typing import Optional, Dict, Any, List
 import yaml
 
+from .feedback_learner import FeedbackRuleLearner
+
 
 DEFAULT_TEMPLATES: Dict[str, Dict[str, str]] = {
     "base": {
@@ -170,7 +172,7 @@ class PromptBuilder:
 
     def build_extraction_prompt(self, category_key: str, context_text: Optional[str] = None) -> str:
         """
-        组装提示词：公共基础模板 + 类别专用插件 (+ 待提取文本)
+        组装提示词：公共基础模板 + 类别专用插件 (+ 自学习历史复核规则) (+ 待提取文本)
         """
         base = self.get_base_template()
         meta, plugin_body = self.get_plugin(category_key)
@@ -182,6 +184,13 @@ class PromptBuilder:
             f"--- 类别专用指导要求（{plugin_title}） ---",
             plugin_body,
         ]
+
+        try:
+            learned_block = FeedbackRuleLearner().build_prompt_injection_block(category_key)
+            if learned_block:
+                prompt_parts.extend(["", learned_block])
+        except Exception:
+            pass
 
         if context_text:
             prompt_parts.extend([
