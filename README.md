@@ -63,7 +63,7 @@ flowchart LR
 
 ```text
 CP/
-├── spec.md                         # 系统规格说明书 (v1.0)
+├── spec.md                         # 系统规格说明书 (v1.2 Living Spec，与代码双向契约绑定)
 ├── pyproject.toml                  # Python 项目依赖与构建配置
 ├── .env.example                    # 环境变量配置模板
 ├── start_lan.sh                    # 局域网共享一键启动脚本
@@ -97,11 +97,12 @@ CP/
 │       │   └── validator.py        # 质量门禁、反幻觉溯源与 PDF 页码精确定位校验器
 │       └── schemas/
 │           └── models.py           # Pydantic V2 严格数据契约定义 (含 source_page & source_file_url)
-└── tests/                          # 自动化单元测试与基准回归测试套件 (17 项全链路用例)
+└── tests/                          # 自动化单元测试、基准回归与 Spec 契约测试套件 (22 项全链路用例)
     ├── benchmark_samples/          # 四大类行业标准测试样本 (.md)
     ├── test_api_and_deepseek.py    # FastAPI 接口、人工审核闭环与提示词管理测试
     ├── test_benchmark_regression.py# 四类标准端到端回归测试
-    └── test_extractor.py           # 数据模型、表格还原、章节分块、自纠错与 PDF 超链接单元测试
+    ├── test_extractor.py           # 数据模型、表格还原、章节分块、自纠错与 PDF 超链接单元测试
+    └── test_spec_consistency.py    # spec.md 与 Pydantic 模型/枚举/模板双向契约一致性测试
 ```
 
 ---
