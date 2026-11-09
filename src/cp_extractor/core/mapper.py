@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Union
 import openpyxl
 from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
-from ..schemas.models import ExtractionPackage
+from ..schemas.models import CharacteristicListPackage, ExtractionPackage
 
 
 class ControlPlanExcelMapper:
@@ -43,6 +43,9 @@ class ControlPlanExcelMapper:
         ("需人工确认", 12),
         ("备注", 20),
     ]
+    # 居中对齐的列序号与条款号超链接所在列序号（子类可覆写）
+    CENTER_COLS = (1, 3, 7, 9, 13, 14)
+    CLAUSE_COL = 7
 
     def export(self, package: ExtractionPackage, output_path: Union[str, Path]) -> Path:
         """导出提取包到 Excel 文件"""
@@ -153,7 +156,7 @@ class ControlPlanExcelMapper:
             cell.border = self.BORDER_THIN
             if highlight_warning:
                 cell.fill = self.WARNING_FILL
-            if col_idx in (1, 3, 7, 9, 13, 14):
+            if col_idx in self.CENTER_COLS:
                 cell.alignment = align_center
             else:
                 cell.alignment = align_left
@@ -181,7 +184,7 @@ class ControlPlanExcelMapper:
         target_link = self.resolve_full_hyperlink_url(source_url, source_page)
         if not target_link:
             return
-        cell = ws.cell(row=row_idx, column=7)
+        cell = ws.cell(row=row_idx, column=self.CLAUSE_COL)
         cell.hyperlink = target_link
         cell.font = Font(name="微软雅黑", size=10, color="0563C1", underline="single")
 
@@ -217,3 +220,80 @@ class ControlPlanExcelMapper:
             ws.append(["单位不一致告警", item])
         for item in report.suggestions:
             ws.append(["优化建议", item])
+
+
+class CharacteristicListExcelMapper(ControlPlanExcelMapper):
+    """仅特性清单模式 Excel 导出（精简 7 列）"""
+
+    COLUMNS = [
+        ("序号", 8),
+        ("特性名称 (中文规范名)", 28),
+        ("原文名称", 26),
+        ("是否强制", 10),
+        ("置信度", 10),
+        ("标准条款号", 18),
+        ("原文引用摘录", 48),
+        ("待确认", 10),
+        ("备注", 28),
+    ]
+    CENTER_COLS = (1, 4, 5, 6, 8)
+    CLAUSE_COL = 6
+
+    def _append_entries(self, ws, entries, source_url, highlight_warning: bool = False):
+        row_idx = 3
+        for idx, item in enumerate(entries, start=1):
+            clauses = "、".join(item.standard_clauses) or "-"
+            clause_label = f"{clauses} (P.{item.source_page})" if item.source_page else clauses
+            ws.append([
+                idx,
+                item.characteristic_name,
+                item.original_name,
+                "是" if item.is_mandatory else "否",
+                item.confidence.value,
+                clause_label,
+                item.source_quote,
+                "是" if item.needs_human_review else "否",
+                item.notes or "",
+            ])
+            self._style_data_row(ws, row_idx, highlight_warning=highlight_warning)
+            self._apply_clause_hyperlink(ws, row_idx, source_url, item.source_page)
+            row_idx += 1
+
+    def export(self, package: CharacteristicListPackage, output_path: Union[str, Path]) -> Path:
+        output_path = Path(output_path)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        source_url = package.standard_info.source_file_url
+
+        wb = openpyxl.Workbook()
+        ws_items = wb.active
+        ws_items.title = "特性清单"
+        self._write_sheet_headers(ws_items, f"特性清单 - {package.standard_info.file_name}")
+        self._append_entries(ws_items, package.characteristics, source_url)
+
+        ws_pending = wb.create_sheet(title="待人工确认特性")
+        self._write_sheet_headers(ws_pending, f"待人工确认特性 - {package.standard_info.file_name}")
+        self._append_entries(ws_pending, package.pending_review_items, source_url, highlight_warning=True)
+
+        ws_report = wb.create_sheet(title="校验报告")
+        ws_report.column_dimensions["A"].width = 24
+        ws_report.column_dimensions["B"].width = 70
+        ws_report.append(["特性清单校验报告", ""])
+        ws_report.cell(1, 1).font = Font(name="微软雅黑", size=14, bold=True, color="1F497D")
+        summary = package.coverage_summary
+        ws_report.append(["标准文件名", package.standard_info.file_name])
+        ws_report.append(["标准分类", package.standard_info.standard_category])
+        ws_report.append(["模板版本", package.standard_info.template_version])
+        ws_report.append(["特性总数", summary.check_items_extracted])
+        ws_report.append(["强制特性数", sum(1 for i in package.characteristics + package.pending_review_items if i.is_mandatory)])
+        ws_report.append(["待人工确认数", len(package.pending_review_items)])
+        ws_report.append(["", ""])
+        report = package.validation_report
+        for msg in report.missing_clause_or_quote:
+            ws_report.append(["溯源失配告警", msg])
+        for msg in report.name_not_in_quote:
+            ws_report.append(["原文名称告警", msg])
+        for msg in report.suggestions:
+            ws_report.append(["优化建议", msg])
+
+        wb.save(output_path)
+        return output_path

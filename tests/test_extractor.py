@@ -507,3 +507,98 @@ def test_v2_grill_me_architectural_decisions(tmp_path: Path):
     )
     assert sent_to_refiner == ["硬错误单边公差项"]
     assert len(res_pipe.pending_review_items) == 2
+
+
+def test_characteristic_list_pipeline_rule_fallback():
+    """测试仅特性清单模式在离线/内置规则模式下的提取与去重"""
+    from src.cp_extractor.core.extractor import StandardExtractorPipeline
+    from src.cp_extractor.schemas.models import CharacteristicListPackage
+
+    samples_dir = Path(__file__).resolve().parent / "benchmark_samples"
+    sample_text = (samples_dir / "sample_tolerance_iso2768.md").read_text(encoding="utf-8")
+
+    pipeline = StandardExtractorPipeline(llm_callable=None)
+    pkg = pipeline.run_characteristic_list("sample_tolerance_iso2768.md", sample_text)
+    assert isinstance(pkg, CharacteristicListPackage)
+    assert pkg.standard_info.template_version == "char_list-v1.0"
+    all_names = [c.characteristic_name for c in pkg.characteristics + pkg.pending_review_items]
+    assert len(all_names) > 0
+
+
+def test_characteristic_list_validator_and_page_resolution():
+    """测试特性清单精简门禁：原文匹配、original_name 子串核对、页码定位"""
+    from src.cp_extractor.core.validator import QualityGateValidator
+    from src.cp_extractor.schemas.models import (
+        CharacteristicEntry,
+        CharacteristicListPackage,
+        ConfidenceLevel,
+        StandardInfo,
+    )
+
+    doc_text = """
+    <!-- 第 1 页 -->
+    3.1 屈服强度 ReH 应不小于 420 MPa。
+    <!-- 第 2 页 -->
+    3.2 表面粗糙度 Ra 控制在 1.6 μm。
+    """
+    item1 = CharacteristicEntry(
+        characteristic_name="屈服强度",
+        original_name="屈服强度 ReH",
+        standard_clauses=["3.1"],
+        source_quote="屈服强度 ReH 应不小于 420 MPa",
+        confidence=ConfidenceLevel.HIGH,
+    )
+    # 原文名称不在引用中，触发门禁
+    item2 = CharacteristicEntry(
+        characteristic_name="抗拉强度",
+        original_name="抗拉强度 Rm",
+        standard_clauses=["3.2"],
+        source_quote="表面粗糙度 Ra 控制在 1.6 μm",
+        confidence=ConfidenceLevel.HIGH,
+    )
+    pkg = CharacteristicListPackage(
+        standard_info=StandardInfo(file_name="test.pdf", standard_category="材料标准"),
+        characteristics=[item1, item2],
+    )
+    val = QualityGateValidator()
+    validated = val.validate_characteristic_list(pkg, source_full_text=doc_text)
+
+    # item1 应该通过，且 source_page 解析为 1
+    passed = [c for c in validated.characteristics if c.characteristic_name == "屈服强度"]
+    assert len(passed) == 1
+    assert passed[0].source_page == 1
+
+    # item2 因为 original_name 不在 source_quote 中，应该进入 pending_review_items
+    pending = [c for c in validated.pending_review_items if c.characteristic_name == "抗拉强度"]
+    assert len(pending) == 1
+    assert any("抗拉强度" in err for err in validated.validation_report.name_not_in_quote)
+
+
+def test_characteristic_list_excel_export(tmp_path):
+    """测试特性清单 Excel 导出功能"""
+    from src.cp_extractor.core.mapper import CharacteristicListExcelMapper
+    from src.cp_extractor.schemas.models import (
+        CharacteristicEntry,
+        CharacteristicListPackage,
+        ConfidenceLevel,
+        StandardInfo,
+    )
+
+    pkg = CharacteristicListPackage(
+        standard_info=StandardInfo(file_name="test.pdf", standard_category="公差/尺寸标准"),
+        characteristics=[
+            CharacteristicEntry(
+                characteristic_name="孔径公差",
+                original_name="孔径",
+                standard_clauses=["3.1", "表1"],
+                source_quote="孔径控制在 Ø10 ± 0.05",
+                source_page=2,
+                is_mandatory=True,
+                confidence=ConfidenceLevel.HIGH,
+            )
+        ],
+    )
+    excel_path = tmp_path / "test_char_list.xlsx"
+    mapper = CharacteristicListExcelMapper()
+    res_path = mapper.export(pkg, excel_path)
+    assert res_path.exists()

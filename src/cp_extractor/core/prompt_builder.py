@@ -10,6 +10,36 @@ import yaml
 from .feedback_learner import FeedbackRuleLearner
 
 
+# 仅特性清单模式（char_list）出厂默认模板：只提取特性名称，不提取规范/方法/判据
+CHAR_LIST_DEFAULT_CONTENT = """你是汽车行业质量工程师（IATF 16949）。任务：通读下面的标准原文，**列出其中所有可检查、可验证的产品特性与过程特性的名称**。
+本任务只关心「有哪些特性」，**不需要**提取公差数值、检查方法或判定准则。
+
+## 扫描范围（宁可多列，不可漏列）
+逐条扫描正文、表格、表注、脚注与附录，对照以下清单：
+- 尺寸/公差类：线性/角度尺寸、GD&T 形位公差（注明基准）、表面粗糙度、螺纹、倒角/圆角、未注公差
+- 材料类：化学成分（**每个元素单独一条**，如 C、Si、Mn、P、S）、抗拉强度、屈服强度、延伸率、硬度、冷弯、金相组织、晶粒度
+- 工艺类：热处理温度/时间/碳势、焊接参数、涂装参数、拧紧扭矩等（名称前加【适用工序】，如【强渗工序】渗碳温度）
+- 外观/性能类：各类表面缺陷、色差、光泽、膜厚、附着力、耐盐雾/耐候、耐冲击、耐化学品等
+
+## 纳入规则
+1. 带「应、必须、不小于、不大于、符合……」等强制要求的特性 → `is_mandatory: true`
+2. 带「宜、参考、协商、不作为判据」的特性，或仅提到特性但未给出判据的 → **同样列出**，`is_mandatory: false`
+3. 不列入：圆括号参考尺寸（如 (120)）、图号/标题栏/修订记录、设备定期校验与维护要求
+
+## 粒度与去重
+- 一个被测量 = 一条。同一特性的多个尺寸分段/等级行合并为一条，不要按表格行拆分。
+- 同一特性出现在多个条款时只输出一条，`standard_clauses` 列出全部条款号。
+
+## 字段说明（先引原文，再给名称）
+- `standard_clauses`：条款号数组，如 ["3.1", "表2"]
+- `source_quote`：逐字摘录包含该特性的原文短句（不得改写，80 字以内）
+- `original_name`：特性在原文中的名称，逐字复制，必须是 `source_quote` 的子串
+- `characteristic_name`：中文控制计划规范名（原文为外文时翻译；GD&T 注明基准）
+- `is_mandatory`：true / false
+- `confidence`：高/中/低；无法辨认或不确定时为「低」并在 `notes` 说明原因
+- `notes`：可选"""
+
+
 DEFAULT_TEMPLATES: Dict[str, Dict[str, str]] = {
     "base": {
         "title": "🌐 公共基础模板 (全局判定规则)",
@@ -123,6 +153,12 @@ DEFAULT_TEMPLATES: Dict[str, Dict[str, str]] = {
             "- ✅ 正例（定性转定量 + 试验条件保留）：原文“3.3 按 GB/T 10125 连续喷雾 720h 后，涂层表面无起泡、无生锈，划痕单侧扩蚀宽度 ≤ 2.0 mm（卡尺测量）” -> `characteristic_category`: `\"性能\"`，`inspection_method`: `\"中性盐雾试验 720h（按 GB/T 10125）+ 目视及游标卡尺测量\"`，`acceptance_criteria`: `\"无起泡、无生锈，且划痕单侧扩蚀宽度 ≤ 2.0 mm\"`。"
         ),
     },
+    "char_list": {
+        "title": "📋 仅特性清单模板 (只提取特性名称)",
+        "rel_path": "characteristic_list_template.md",
+        "description": "仅特性清单模式专用：偏召回地列出标准中所有特性名称（中文规范名 + 原文名），不提取规范/公差、检查方法与判定准则；不叠加类别插件。",
+        "default_content": CHAR_LIST_DEFAULT_CONTENT,
+    },
 }
 
 
@@ -211,6 +247,28 @@ class PromptBuilder:
                 context_text,
             ])
 
+        return "\n".join(prompt_parts)
+
+    def get_characteristic_list_template(self) -> str:
+        """加载仅特性清单模式模板（文件缺失时回退出厂默认内容）"""
+        path = self.templates_dir / DEFAULT_TEMPLATES["char_list"]["rel_path"]
+        if not path.exists():
+            return CHAR_LIST_DEFAULT_CONTENT.strip()
+        _, body = self._parse_frontmatter(self._load_template_file(path))
+        return body
+
+    def build_characteristic_list_prompt(self, context_text: Optional[str] = None) -> str:
+        """
+        组装仅特性清单模式提示词：单一精简模板 (+ 待提取文本)。
+        不叠加类别插件，也不注入自学习规则（自学习规则面向规范/方法/判据回填，与本模式无关）。
+        """
+        prompt_parts = [self.get_characteristic_list_template()]
+        if context_text:
+            prompt_parts.extend([
+                "",
+                "--- 待提取的标准原文内容 ---",
+                context_text,
+            ])
         return "\n".join(prompt_parts)
 
     def _resolve_template_path(self, key: str) -> Path:

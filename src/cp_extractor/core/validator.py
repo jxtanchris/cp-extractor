@@ -6,6 +6,9 @@
 import re
 from typing import List, Optional
 from ..schemas.models import (
+    CharacteristicEntry,
+    CharacteristicListPackage,
+    CharacteristicListReport,
     CheckItem,
     ConfidenceLevel,
     ExtractionPackage,
@@ -326,4 +329,63 @@ class QualityGateValidator:
         package.validation_report = report
         package.refresh_summary()
 
+        return package
+
+    @staticmethod
+    def _strip_ws(text: str) -> str:
+        return re.sub(r"\s+", "", text or "")
+
+    def validate_characteristic_list(
+        self,
+        package: CharacteristicListPackage,
+        source_full_text: Optional[str] = None,
+    ) -> CharacteristicListPackage:
+        """
+        仅特性清单模式的精简门禁（不启用单位/方法判据/单边公差/参考尺寸门禁与自学习）：
+        1. 原文引用必须存在且去空白后能在原文中完全匹配（硬门禁）；
+        2. 原文名称必须是原文引用的子串（硬门禁）；
+        3. 低置信度项强制人工确认（软门禁）；
+        4. 根据 `<!-- 第 X 页 -->` 标记反查 PDF 页码。
+        """
+        report = CharacteristicListReport()
+        candidates = package.characteristics + package.pending_review_items
+        clean_source = self._strip_ws(source_full_text) if source_full_text else ""
+
+        valid: List[CharacteristicEntry] = []
+        review: List[CharacteristicEntry] = []
+        for idx, item in enumerate(candidates, start=1):
+            tag = f"#{idx} [{item.characteristic_name}]"
+            needs_review = item.confidence == ConfidenceLevel.LOW
+            first_clause = item.standard_clauses[0] if item.standard_clauses else ""
+
+            if source_full_text:
+                page = self.resolve_source_page(source_full_text, item.source_quote, first_clause)
+                if page is not None:
+                    item.source_page = page
+
+            clean_quote = self._strip_ws(item.source_quote)
+            if len(clean_quote) < 2:
+                report.missing_clause_or_quote.append(f"{tag}: 缺少原文引用内容")
+                needs_review = True
+            elif clean_source and clean_quote not in clean_source:
+                report.missing_clause_or_quote.append(f"{tag}: 原文引用无法在原文中完全匹配，可能存在改写或幻觉")
+                needs_review = True
+
+            clean_orig = self._strip_ws(item.original_name)
+            if clean_quote and clean_orig and clean_orig.lower() not in clean_quote.lower():
+                report.name_not_in_quote.append(f"{tag}: 原文名称「{item.original_name}」未出现在原文引用中")
+                needs_review = True
+
+            if not item.standard_clauses:
+                item.notes = item.notes or "未识别到条款号，请人工补充"
+
+            item.needs_human_review = needs_review
+            (review if needs_review else valid).append(item)
+
+        if review:
+            report.suggestions.append(f"共有 {len(review)} 条特性触发门禁，需人工复核。")
+        package.characteristics = valid
+        package.pending_review_items = review
+        package.validation_report = report
+        package.refresh_summary()
         return package

@@ -100,3 +100,48 @@ class ExtractionPackage(BaseModel):
         self.coverage_summary.high_confidence = sum(1 for i in all_items if i.confidence == ConfidenceLevel.HIGH)
         self.coverage_summary.medium_confidence = sum(1 for i in all_items if i.confidence == ConfidenceLevel.MEDIUM)
         self.coverage_summary.low_confidence = sum(1 for i in all_items if i.confidence == ConfidenceLevel.LOW)
+
+
+# ==================== 仅特性清单模式 (Characteristic List Mode, v2.1) ====================
+
+
+class CharacteristicEntry(BaseModel):
+    """单条特性清单条目（仅特性清单模式：只关心「有哪些特性」，不提取规范/方法/判据）"""
+    characteristic_name: str = Field(..., description="中文控制计划规范特性名称")
+    original_name: str = Field(..., description="特性在原文中的名称（逐字摘录，必须为 source_quote 子串）")
+    standard_clauses: List[str] = Field(default_factory=list, description="出现该特性的全部标准条款号")
+    source_quote: str = Field(..., description="原文引用逐字摘录（防幻觉溯源锚点）")
+    source_page: Optional[int] = Field(default=None, ge=1, description="原文所在 PDF 页码（从 1 开始）")
+    is_mandatory: bool = Field(default=True, description="是否为强制要求（建议性/无判据条款为 false）")
+    confidence: ConfidenceLevel = Field(..., description="提取置信度：高/中/低")
+    needs_human_review: bool = Field(default=False, description="是否需人工确认")
+    notes: Optional[str] = Field(default=None, description="备注说明或门禁拦截提示")
+
+    @model_validator(mode="after")
+    def enforce_low_confidence_review(self) -> "CharacteristicEntry":
+        if self.confidence == ConfidenceLevel.LOW and not self.needs_human_review:
+            self.needs_human_review = True
+        return self
+
+
+class CharacteristicListReport(BaseModel):
+    """仅特性清单模式的精简校验报告"""
+    missing_clause_or_quote: List[str] = Field(default_factory=list, description="缺失条款/原文引用或原文无法匹配的项")
+    name_not_in_quote: List[str] = Field(default_factory=list, description="原文名称不在原文引用中的项")
+    suggestions: List[str] = Field(default_factory=list, description="整改建议或优化提示")
+
+
+class CharacteristicListPackage(BaseModel):
+    """仅特性清单模式输出包"""
+    standard_info: StandardInfo
+    characteristics: List[CharacteristicEntry] = Field(default_factory=list, description="通过门禁的特性清单")
+    pending_review_items: List[CharacteristicEntry] = Field(default_factory=list, description="待人工确认的特性")
+    coverage_summary: CoverageSummary = Field(default_factory=CoverageSummary)
+    validation_report: CharacteristicListReport = Field(default_factory=CharacteristicListReport)
+
+    def refresh_summary(self) -> None:
+        all_items = self.characteristics + self.pending_review_items
+        self.coverage_summary.check_items_extracted = len(all_items)
+        self.coverage_summary.high_confidence = sum(1 for i in all_items if i.confidence == ConfidenceLevel.HIGH)
+        self.coverage_summary.medium_confidence = sum(1 for i in all_items if i.confidence == ConfidenceLevel.MEDIUM)
+        self.coverage_summary.low_confidence = sum(1 for i in all_items if i.confidence == ConfidenceLevel.LOW)

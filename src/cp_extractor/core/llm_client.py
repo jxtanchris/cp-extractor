@@ -54,6 +54,27 @@ JSON_SCHEMA_INSTRUCTION = """
 """
 
 
+CHAR_LIST_JSON_INSTRUCTION = """
+--- 严格 JSON 输出格式要求（仅特性清单模式） ---
+请严格输出合法的 JSON 对象，每个特性对象按下方字段顺序生成（先条款号与原文引用，再给名称）：
+{
+  "characteristics": [
+    {
+      "standard_clauses": ["3.1"],
+      "source_page": 1,
+      "source_quote": "逐字摘录的原文短句（80字以内，不得改写）",
+      "original_name": "原文中的特性名称（必须是 source_quote 的子串）",
+      "characteristic_name": "中文控制计划规范特性名称",
+      "is_mandatory": true,
+      "confidence": "高 | 中 | 低（三选一）",
+      "notes": null
+    }
+  ]
+}
+【极其重要】：只输出 ```json ``` 代码块，不要输出任何解释文字。若原文带有 `<!-- 第 X 页 -->` 标记，请把页码整数填入 `source_page`，否则填 null。
+"""
+
+
 LLM_PROVIDERS: Dict[str, Dict[str, Any]] = {
     "deepseek": {
         "key": "deepseek",
@@ -517,6 +538,58 @@ class LLMClient:
         content = self._call_chat_completions(messages)
         return self._parse_items_from_text(content)
 
+    def extract_characteristic_list_json(self, assembled_prompt: str) -> str:
+        """
+        仅特性清单模式：调用大模型列出标准中的全部特性名称，返回归一化后的特性条目 JSON 数组字符串。
+        """
+        if not self.is_configured:
+            raise ValueError(
+                f"未配置 {self.provider_name} API Key。请在 Web 界面右上角【大模型 API 配置】中填入 Key 或在 .env 中设置。"
+            )
+        messages: List[Dict[str, str]] = [
+            {
+                "role": "system",
+                "content": "你是严谨的汽车行业 IATF 16949 质量工程师，负责从技术标准中完整列出所有可检查的特性名称并严格输出 JSON。",
+            },
+            {"role": "user", "content": f"{assembled_prompt}\n\n{CHAR_LIST_JSON_INSTRUCTION}"},
+        ]
+        content = self._call_chat_completions(messages)
+        return json.dumps(self._parse_characteristics_from_text(content), ensure_ascii=False)
+
+    def refine_characteristics_with_feedback(
+        self,
+        source_text: str,
+        failed_items: List[Dict[str, Any]],
+        error_messages: List[str],
+    ) -> List[Dict[str, Any]]:
+        """仅特性清单模式的二次自纠错：只修正原文引用失配/原文名称不在引用中的条目"""
+        if not self.is_configured or not failed_items:
+            return failed_items
+        feedback_prompt = (
+            "以下特性条目未通过原文溯源校验，请严格基于标准原文逐条修正。\n\n"
+            "--- 校验错误 ---\n"
+            + "\n".join(f"- {msg}" for msg in error_messages)
+            + "\n\n--- 待修正的特性条目 JSON ---\n"
+            + json.dumps({"characteristics": failed_items}, ensure_ascii=False, indent=2)
+            + "\n\n--- 标准原文参考 ---\n"
+            + source_text
+            + "\n\n修正要求：\n"
+            "1. `source_quote` 必须是标准原文中一字不差的真实子串；\n"
+            "2. `original_name` 必须是 `source_quote` 的子串；\n"
+            "3. 若原文中确实不存在该特性（编造），请将其从结果中删除；\n"
+            "4. 不要新增条目，不要修改 `characteristic_name` 以外无关的语义。\n"
+            f"{CHAR_LIST_JSON_INSTRUCTION}"
+        )
+        messages: List[Dict[str, str]] = [
+            {
+                "role": "system",
+                "content": "你是严谨的汽车行业 IATF 16949 质量审核专家，负责对溯源失败的特性条目进行精准修正并输出 JSON。",
+            },
+            {"role": "user", "content": feedback_prompt},
+        ]
+        content = self._call_chat_completions(messages)
+        return self._parse_characteristics_from_text(content)
+
     def _is_reasoning_model(self) -> bool:
         m = self.model.lower()
         return any(tag in m for tag in ("reasoner", "deepseek-r1", "qwq", "glm-z1", "o1", "o3"))
@@ -701,8 +774,8 @@ class LLMClient:
         raise ValueError("大模型返回的 JSON 因超长截断且无法恢复有效条目，请尝试拆分文档后重试。")
 
     @staticmethod
-    def _parse_items_from_text(text: str) -> List[Dict[str, Any]]:
-        """从模型响应文本中安全解析并归一化检查项数组（支持 <think> 思维链剥离与超长截断自动恢复）"""
+    def _load_raw_items_list(text: str) -> List[Any]:
+        """从模型响应文本中剥离思维链/代码块并解析出原始条目列表（支持超长截断自动恢复）"""
         cleaned = text.strip()
         # 剥离推理模型（如 DeepSeek-R1 / QwQ / 本地 R1）可能输出的 <think>...</think> 标签
         cleaned = re.sub(r"<think>[\s\S]*?</think>", "", cleaned).strip()
@@ -726,6 +799,67 @@ class LLMClient:
 
         if not isinstance(parsed, list):
             raise ValueError("大模型返回的 JSON 结构无法解析为检查项列表")
+        return parsed
+
+    @staticmethod
+    def _parse_characteristics_from_text(text: str) -> List[Dict[str, Any]]:
+        """仅特性清单模式：解析并归一化特性条目数组"""
+        parsed = LLMClient._load_raw_items_list(text)
+        conf_alias = {"high": "高", "medium": "中", "low": "低"}
+        normalized: List[Dict[str, Any]] = []
+        for raw in parsed:
+            if not isinstance(raw, dict):
+                continue
+            name = str(raw.get("characteristic_name") or raw.get("name") or "").strip()
+            original = str(raw.get("original_name") or "").strip()
+            if not name and not original:
+                continue
+
+            clauses_raw = raw.get("standard_clauses")
+            if clauses_raw is None:
+                clauses_raw = raw.get("standard_clause")
+            if isinstance(clauses_raw, str):
+                clauses = [c.strip() for c in re.split(r"[,，、;；]", clauses_raw) if c.strip()]
+            elif isinstance(clauses_raw, list):
+                clauses = [str(c).strip() for c in clauses_raw if str(c).strip()]
+            else:
+                clauses = []
+
+            conf = str(raw.get("confidence", "中")).strip()
+            if conf not in ("高", "中", "低"):
+                conf = conf_alias.get(conf.lower(), "中")
+
+            page: Optional[int] = None
+            try:
+                p_int = int(str(raw.get("source_page")).strip())
+                page = p_int if p_int >= 1 else None
+            except (ValueError, TypeError):
+                page = None
+
+            mandatory_raw = raw.get("is_mandatory", True)
+            if isinstance(mandatory_raw, str):
+                mandatory = mandatory_raw.strip().lower() not in ("false", "否", "no", "0")
+            else:
+                mandatory = bool(mandatory_raw)
+
+            notes = raw.get("notes")
+            normalized.append({
+                "characteristic_name": name or original,
+                "original_name": original or name,
+                "standard_clauses": clauses,
+                "source_quote": str(raw.get("source_quote") or ""),
+                "source_page": page,
+                "is_mandatory": mandatory,
+                "confidence": conf,
+                "needs_human_review": conf == "低",
+                "notes": str(notes) if notes not in (None, "", "null") else None,
+            })
+        return normalized
+
+    @staticmethod
+    def _parse_items_from_text(text: str) -> List[Dict[str, Any]]:
+        """从模型响应文本中安全解析并归一化检查项数组（支持 <think> 思维链剥离与超长截断自动恢复）"""
+        parsed = LLMClient._load_raw_items_list(text)
 
         valid_categories = {"尺寸", "材料", "工艺参数", "外观", "性能"}
         category_alias = {

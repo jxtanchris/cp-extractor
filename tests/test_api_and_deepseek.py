@@ -9,6 +9,22 @@ from src.cp_extractor.core.llm_client import DeepSeekClient
 client = TestClient(app)
 
 
+def _get_auth_headers():
+    reg_resp = client.post(
+        "/api/auth/register",
+        json={"username": "qa_tester_runner", "password": "password123", "display_name": "自动化测试员"},
+    )
+    if reg_resp.status_code == 200:
+        token = reg_resp.json()["access_token"]
+    else:
+        login_resp = client.post(
+            "/api/auth/login",
+            json={"username": "qa_tester_runner", "password": "password123"},
+        )
+        token = login_resp.json()["access_token"]
+    return {"Authorization": f"Bearer {token}"}
+
+
 def test_web_ui_and_samples_endpoints():
     # 1. 首页加载
     resp = client.get("/")
@@ -28,6 +44,7 @@ def test_web_ui_and_samples_endpoints():
 
 
 def test_extract_and_human_review_workflow():
+    headers = _get_auth_headers()
     sample_data = client.get("/api/samples/sample_tolerance_iso2768.md").json()
 
     # 1. 调用提取接口
@@ -38,6 +55,7 @@ def test_extract_and_human_review_workflow():
             "content": sample_data["content"],
             "engine_mode": "rule",
         },
+        headers=headers,
     )
     assert ext_resp.status_code == 200
     body = ext_resp.json()
@@ -59,6 +77,7 @@ def test_extract_and_human_review_workflow():
             "action": "approve",
             "updated_item": pending_item,
         },
+        headers=headers,
     )
     assert rev_resp.status_code == 200
     updated_pkg = rev_resp.json()["package"]
@@ -123,11 +142,11 @@ def test_deepseek_json_parser_compatibility():
 
 def test_template_management_endpoints():
     """测试提示词模板查询、修改保存与恢复出厂默认接口"""
-    # 1. 获取所有模板
+    # 1. 获取所有模板（基础模板 + 4 类插件 + char_list 仅特性清单模板，共 6 个）
     list_resp = client.get("/api/templates")
     assert list_resp.status_code == 200
     data = list_resp.json()
-    assert len(data["templates"]) == 5
+    assert len(data["templates"]) == 6
     base_tpl = next(t for t in data["templates"] if t["key"] == "base")
     original_content = base_tpl["content"]
 
@@ -319,6 +338,7 @@ def test_feedback_rule_learning_auto_promotion_and_auto_apply():
     client.put("/api/learning/settings", json={"threshold": 3})
 
     try:
+        headers = _get_auth_headers()
         sample_data = client.get("/api/samples/sample_tolerance_iso2768.md").json()
 
         # 初始状态：提取公差标准样本有 10 条正式项，1 条待人工确认项（局部非关键翻边轮廓度）
@@ -329,6 +349,7 @@ def test_feedback_rule_learning_auto_promotion_and_auto_apply():
                 "content": sample_data["content"],
                 "engine_mode": "rule",
             },
+            headers=headers,
         ).json()["package"]
         assert len(ext1["check_items"]) == 10
         assert len(ext1["pending_review_items"]) == 1
@@ -347,6 +368,7 @@ def test_feedback_rule_learning_auto_promotion_and_auto_apply():
         r1 = client.post(
             "/api/approve-review",
             json={"package": ext1, "review_index": 0, "action": "approve", "updated_item": revised_item},
+            headers=headers,
         ).json()["learning_event"]
         assert r1["current_count"] == 1
         assert r1["rule"]["is_active"] is False
@@ -355,6 +377,7 @@ def test_feedback_rule_learning_auto_promotion_and_auto_apply():
         r2 = client.post(
             "/api/approve-review",
             json={"package": ext1, "review_index": 0, "action": "approve", "updated_item": revised_item},
+            headers=headers,
         ).json()["learning_event"]
         assert r2["current_count"] == 2
         assert r2["rule"]["is_active"] is False
@@ -363,6 +386,7 @@ def test_feedback_rule_learning_auto_promotion_and_auto_apply():
         r3 = client.post(
             "/api/approve-review",
             json={"package": ext1, "review_index": 0, "action": "approve", "updated_item": revised_item},
+            headers=headers,
         ).json()["learning_event"]
         assert r3["current_count"] == 3
         assert r3["just_promoted"] is True
@@ -376,6 +400,7 @@ def test_feedback_rule_learning_auto_promotion_and_auto_apply():
                 "content": sample_data["content"],
                 "engine_mode": "rule",
             },
+            headers=headers,
         ).json()["package"]
         assert len(ext_after["pending_review_items"]) == 0
         assert len(ext_after["check_items"]) == 11

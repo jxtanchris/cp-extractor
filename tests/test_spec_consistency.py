@@ -125,6 +125,30 @@ def test_spec_extraction_package_json_matches_pydantic_models():
     assert validated.standard_info.file_name == pkg_dict["standard_info"]["file_name"]
 
 
+def test_spec_characteristic_list_package_matches_pydantic_models():
+    """契约 2.1：spec.md 6.3 节 CharacteristicListPackage 结构与其 Pydantic 模型 100% 对齐"""
+    from src.cp_extractor.schemas.models import (
+        CharacteristicEntry,
+        CharacteristicListPackage,
+        CharacteristicListReport,
+    )
+    spec_text = _load_spec_text()
+    sec_match = re.search(
+        r"###\s+6\.3\s+仅特性清单模式输出包契约.*?\n```json\s*(.*?)\s*```",
+        spec_text,
+        re.DOTALL,
+    )
+    assert sec_match, "spec.md 第 6.3 节中未找到有效的 ```json 代码块"
+    pkg_dict = json.loads(sec_match.group(1))
+
+    assert set(pkg_dict.keys()) == set(CharacteristicListPackage.model_fields.keys())
+    assert set(pkg_dict["validation_report"].keys()) == set(CharacteristicListReport.model_fields.keys())
+
+    # 验证可直接反序列化
+    validated = CharacteristicListPackage.model_validate(pkg_dict)
+    assert validated.standard_info.template_version == "char_list-v1.0"
+
+
 def test_spec_enums_match_codebase():
     """契约 3：代码中的核心枚举值（特性类别、置信度、标准分类）必须在 spec.md 中完整声明"""
     spec_text = _load_spec_text()

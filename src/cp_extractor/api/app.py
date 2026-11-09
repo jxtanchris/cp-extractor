@@ -13,17 +13,20 @@ import json
 import os
 import re
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile, status
 from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
 
+from ..core.auth import AuthManager
 from ..core.classifier import StandardClassifier
 from ..core.extractor import StandardExtractorPipeline
 from ..core.feedback_learner import FeedbackRuleLearner
 from ..core.lexicon_db import LexiconDB
 from ..core.llm_client import (
+    CHAR_LIST_JSON_INSTRUCTION,
     DeepSeekClient,
     JSON_SCHEMA_INSTRUCTION,
     LLMClient,
@@ -31,10 +34,21 @@ from ..core.llm_client import (
     get_providers_status,
     persist_llm_config_to_env,
 )
-from ..core.mapper import ControlPlanExcelMapper
+from ..core.mapper import CharacteristicListExcelMapper, ControlPlanExcelMapper
 from ..core.parser import DocumentParser
 from ..core.prompt_builder import PromptBuilder
-from ..schemas.models import CheckItem, ExtractionPackage
+from ..schemas.auth import (
+    TokenResponse,
+    UserLoginRequest,
+    UserRegisterRequest,
+    UserResponse,
+)
+from ..schemas.models import (
+    CharacteristicEntry,
+    CharacteristicListPackage,
+    CheckItem,
+    ExtractionPackage,
+)
 
 ROOT_DIR = Path(__file__).resolve().parent.parent.parent.parent
 SAMPLES_DIR = ROOT_DIR / "tests" / "benchmark_samples"
@@ -42,6 +56,29 @@ OUTPUT_DIR = ROOT_DIR / "output"
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+
+security_scheme = HTTPBearer(auto_error=False)
+
+
+def get_current_user(
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security_scheme),
+) -> UserResponse:
+    """FastAPI 权限拦截依赖项：校验 Bearer Token 并注入当前用户，未登录抛出 401"""
+    if not credentials:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="必须登录后才能使用上传与提取功能",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    auth_mgr = AuthManager()
+    try:
+        return auth_mgr.authenticate_token(credentials.credentials)
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=str(e),
+            headers={"WWW-Authenticate": "Bearer"},
+        )
 
 app = FastAPI(
     title="CP-Extractor 标准→控制计划检查项提取系统",
@@ -53,12 +90,14 @@ app = FastAPI(
 class PreviewPromptRequest(BaseModel):
     content: str
     manual_category: Optional[str] = None
+    mode: str = Field(default="full", description="full | char_list")
 
 
 class ExtractRequest(BaseModel):
     file_name: str = Field(default="custom_standard.md")
     content: str
     manual_category: Optional[str] = None
+    mode: str = Field(default="full", description="full | char_list")
     engine_mode: str = Field(default="auto", description="llm | deepseek | rule | auto")
     llm_provider: Optional[str] = None
     llm_api_key: Optional[str] = None
@@ -158,10 +197,11 @@ def _persist_uploaded_source(filename: str, raw: bytes) -> str:
     return f"/api/source/{safe_name}"
 
 
-def _persist_artifacts(package: ExtractionPackage) -> Dict[str, str]:
+def _persist_artifacts(package: Union[ExtractionPackage, CharacteristicListPackage]) -> Dict[str, str]:
     stem = _safe_stem(package.standard_info.file_name)
-    json_name = f"{stem}_output.json"
-    excel_name = f"{stem}_control_plan.xlsx"
+    is_char_list = isinstance(package, CharacteristicListPackage)
+    json_name = f"{stem}_char_list.json" if is_char_list else f"{stem}_output.json"
+    excel_name = f"{stem}_characteristics.xlsx" if is_char_list else f"{stem}_control_plan.xlsx"
 
     json_path = OUTPUT_DIR / json_name
     excel_path = OUTPUT_DIR / excel_name
@@ -170,7 +210,10 @@ def _persist_artifacts(package: ExtractionPackage) -> Dict[str, str]:
         json.dumps(package.model_dump(mode="json"), ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
-    mapper = ControlPlanExcelMapper()
+    if is_char_list:
+        mapper = CharacteristicListExcelMapper()
+    else:
+        mapper = ControlPlanExcelMapper()
     mapper.export(package, excel_path)
 
     return {
@@ -192,6 +235,50 @@ def index():
             "Expires": "0",
         },
     )
+
+
+# ---------------------------------------------------------
+# 用户认证与账号管理接口 (Phase 1)
+# ---------------------------------------------------------
+
+@app.post("/api/auth/register", response_model=TokenResponse)
+def register_user(req: UserRegisterRequest):
+    """新用户注册，成功后自动签发登录 Token"""
+    auth_mgr = AuthManager()
+    try:
+        user = auth_mgr.register_user(
+            username=req.username,
+            password=req.password,
+            display_name=req.display_name or "",
+        )
+        token = auth_mgr.issue_token_for_user(user)
+        return TokenResponse(access_token=token, token_type="bearer", user=user)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/api/auth/login", response_model=TokenResponse)
+def login_user(req: UserLoginRequest):
+    """用户登录接口，校验账号密码并返回 Bearer Token"""
+    auth_mgr = AuthManager()
+    try:
+        user = auth_mgr.authenticate_user(username=req.username, password=req.password)
+        token = auth_mgr.issue_token_for_user(user)
+        return TokenResponse(access_token=token, token_type="bearer", user=user)
+    except ValueError as e:
+        raise HTTPException(status_code=401, detail=str(e))
+
+
+@app.get("/api/auth/me", response_model=UserResponse)
+def get_current_user_info(current_user: UserResponse = Depends(get_current_user)):
+    """获取当前登录用户的身份信息"""
+    return current_user
+
+
+@app.post("/api/auth/logout")
+def logout_user(current_user: UserResponse = Depends(get_current_user)):
+    """安全退出登录"""
+    return {"logged_out": True, "message": f"用户 {current_user.username} 已安全退出登录"}
 
 
 @app.get("/api/config")
@@ -291,7 +378,10 @@ def _build_chunks_routing_info(content: str, manual_category: Optional[str] = No
 
 
 @app.post("/api/upload")
-async def upload_standard(file: UploadFile = File(...)):
+async def upload_standard(
+    file: UploadFile = File(...),
+    current_user: UserResponse = Depends(get_current_user),
+):
     raw = await file.read()
     try:
         content = DocumentParser.parse_bytes(file.filename or "uploaded.txt", raw)
@@ -316,6 +406,7 @@ async def upload_standard(file: UploadFile = File(...)):
 async def extract_from_uploaded_document(
     file: UploadFile = File(...),
     category: str = Form(default="tolerance"),
+    mode: str = Form(default="full"),
     llm_provider: Optional[str] = Form(default=None),
     llm_api_key: Optional[str] = Form(default=None),
     llm_base_url: Optional[str] = Form(default=None),
@@ -324,6 +415,7 @@ async def extract_from_uploaded_document(
     deepseek_api_key: Optional[str] = Form(default=None),
     deepseek_base_url: Optional[str] = Form(default=None),
     deepseek_model: Optional[str] = Form(default=None),
+    current_user: UserResponse = Depends(get_current_user),
 ):
     """
     核心三步闭环接口：
@@ -348,9 +440,10 @@ async def extract_from_uploaded_document(
 
     source_file_url = _persist_uploaded_source(file.filename or "standard.pdf", raw)
 
+    # 严格使用服务端环境变量配置的大模型 API Key，禁止用户各自配置个人 Key
     llm_client = LLMClient(
         provider=llm_provider,
-        api_key=llm_api_key or deepseek_api_key,
+        api_key=None,
         base_url=llm_base_url or deepseek_base_url,
         model=llm_model or deepseek_model,
         temperature=llm_temperature,
@@ -358,20 +451,30 @@ async def extract_from_uploaded_document(
     if not llm_client.is_configured:
         raise HTTPException(
             status_code=400,
-            detail=f"未检测到 {llm_client.provider_name} API Key。请点击右上角【大模型 API 配置】填入你的 Key，或在 .env 文件中配置。",
+            detail=f"未检测到服务端 {llm_client.provider_name} API Key 配置。请管理员在服务端 .env 文件中配置对应 API Key。",
         )
 
     try:
-        pipeline = StandardExtractorPipeline(llm_callable=llm_client.extract_check_items_json)
         manual_cat = category if category != "auto" else None
-        package = pipeline.run(
-            file_name=file.filename or "standard.pdf",
-            content=parsed_text,
-            manual_category=manual_cat,
-        )
+        if mode == "char_list":
+            pipeline = StandardExtractorPipeline(llm_callable=llm_client.extract_characteristic_list_json)
+            package = pipeline.run_characteristic_list(
+                file_name=file.filename or "standard.pdf",
+                content=parsed_text,
+                manual_category=manual_cat,
+                refiner=llm_client.refine_characteristics_with_feedback,
+            )
+        else:
+            pipeline = StandardExtractorPipeline(llm_callable=llm_client.extract_check_items_json)
+            package = pipeline.run(
+                file_name=file.filename or "standard.pdf",
+                content=parsed_text,
+                manual_category=manual_cat,
+            )
         package.standard_info.source_file_url = source_file_url
         downloads = _persist_artifacts(package)
         return {
+            "mode": mode,
             "engine_used": llm_client.display_label,
             "parsed_length": len(parsed_text),
             "parsed_preview": parsed_text[:2000],
@@ -503,6 +606,15 @@ def preview_prompt(req: PreviewPromptRequest):
     classifier = StandardClassifier()
     builder = PromptBuilder()
     try:
+        if req.mode == "char_list":
+            prompt = builder.build_characteristic_list_prompt(context_text=req.content)
+            full_prompt = f"{prompt}\n\n{CHAR_LIST_JSON_INSTRUCTION}"
+            return {
+                "plugin_key": "char_list",
+                "standard_category": "特性清单模式 (全类统一)",
+                "template_version": "v1.0",
+                "prompt": full_prompt,
+            }
         key, cat_enum = classifier.classify(req.content, manual_category=req.manual_category)
         meta, _ = builder.get_plugin(key)
         prompt = builder.build_extraction_prompt(key, context_text=req.content)
@@ -518,13 +630,17 @@ def preview_prompt(req: PreviewPromptRequest):
 
 
 @app.post("/api/extract")
-def run_extraction(req: ExtractRequest):
+def run_extraction(
+    req: ExtractRequest,
+    current_user: UserResponse = Depends(get_current_user),
+):
     if not req.content.strip():
         raise HTTPException(status_code=400, detail="标准文本内容不能为空")
 
+    # 严格使用服务端环境变量配置的大模型 API Key，禁止用户各自配置个人 Key
     llm_client = LLMClient(
         provider=req.llm_provider,
-        api_key=req.llm_api_key or req.deepseek_api_key,
+        api_key=None,
         base_url=req.llm_base_url or req.deepseek_base_url,
         model=req.llm_model or req.deepseek_model,
         temperature=req.llm_temperature,
@@ -535,27 +651,44 @@ def run_extraction(req: ExtractRequest):
         if not llm_client.is_configured:
             raise HTTPException(
                 status_code=400,
-                detail=f"已选择大模型模式，但未检测到 {llm_client.provider_name} API Key。请在右上角【大模型 API 配置】中填入 API Key 或在 .env 中设置。",
+                detail=f"已选择大模型模式，但未检测到服务端 {llm_client.provider_name} API Key 配置。请管理员在服务端 .env 中设置。",
             )
         use_llm = True
     elif req.engine_mode == "auto" and llm_client.is_configured:
         use_llm = True
 
     try:
-        if use_llm:
-            pipeline = StandardExtractorPipeline(llm_callable=llm_client.extract_check_items_json)
-            engine_label = f"{llm_client.provider_short_name} API ({llm_client.model})"
+        if req.mode == "char_list":
+            if use_llm:
+                pipeline = StandardExtractorPipeline(llm_callable=llm_client.extract_characteristic_list_json)
+                engine_label = f"{llm_client.provider_short_name} API ({llm_client.model}) [特性清单模式]"
+                refiner = llm_client.refine_characteristics_with_feedback
+            else:
+                pipeline = StandardExtractorPipeline(llm_callable=None)
+                engine_label = "内置结构化基准引擎 (离线免Key) [特性清单模式]"
+                refiner = None
+            package = pipeline.run_characteristic_list(
+                file_name=req.file_name,
+                content=req.content,
+                manual_category=req.manual_category or None,
+                refiner=refiner,
+            )
         else:
-            pipeline = StandardExtractorPipeline(llm_callable=None)
-            engine_label = "内置结构化基准引擎 (离线免Key)"
+            if use_llm:
+                pipeline = StandardExtractorPipeline(llm_callable=llm_client.extract_check_items_json)
+                engine_label = f"{llm_client.provider_short_name} API ({llm_client.model})"
+            else:
+                pipeline = StandardExtractorPipeline(llm_callable=None)
+                engine_label = "内置结构化基准引擎 (离线免Key)"
 
-        package = pipeline.run(
-            file_name=req.file_name,
-            content=req.content,
-            manual_category=req.manual_category or None,
-        )
+            package = pipeline.run(
+                file_name=req.file_name,
+                content=req.content,
+                manual_category=req.manual_category or None,
+            )
         downloads = _persist_artifacts(package)
         return {
+            "mode": req.mode,
             "engine_used": engine_label,
             "package": package.model_dump(mode="json"),
             **downloads,
@@ -565,9 +698,31 @@ def run_extraction(req: ExtractRequest):
 
 
 @app.post("/api/approve-review")
-def approve_or_reject_review_item(req: ReviewUpdateRequest):
+def approve_or_reject_review_item(
+    req: ReviewUpdateRequest,
+    current_user: UserResponse = Depends(get_current_user),
+):
     """人工审核门禁交互：质量工程师修改并准入待确认项，或驳回剔除，同时记录至自学习规则引擎并同步刷新 Excel"""
     try:
+        is_char_list = "characteristics" in req.package
+        if is_char_list:
+            char_package = CharacteristicListPackage.model_validate(req.package)
+            if req.review_index < 0 or req.review_index >= len(char_package.pending_review_items):
+                raise HTTPException(status_code=400, detail="待审核项索引越界")
+            orig_char = char_package.pending_review_items.pop(req.review_index)
+            if req.action == "approve":
+                final_char = CharacteristicEntry.model_validate(req.updated_item) if req.updated_item else orig_char
+                final_char.needs_human_review = False
+                char_package.characteristics.append(final_char)
+            char_package.refresh_summary()
+            downloads = _persist_artifacts(char_package)
+            return {
+                "package": char_package.model_dump(mode="json"),
+                "learning_event": None,
+                "learning_summary": {},
+                **downloads,
+            }
+
         package = ExtractionPackage.model_validate(req.package)
         if req.review_index < 0 or req.review_index >= len(package.pending_review_items):
             raise HTTPException(status_code=400, detail="待审核项索引越界")
@@ -598,6 +753,10 @@ def approve_or_reject_review_item(req: ReviewUpdateRequest):
             "learning_summary": learner.get_full_learning_payload(),
             **downloads,
         }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"审核处理失败: {e}")
     except HTTPException:
         raise
     except Exception as e:

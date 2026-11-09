@@ -690,8 +690,20 @@
         </div>
       </div>
 
+      <!-- 模式选择开关：完整控制计划 vs 仅特性清单 -->
+      <div class="step-block" style="background: #f8fafc; border: 1px solid #cbd5e1; border-radius: 8px; padding: 10px 12px;">
+        <div style="display:flex; justify-content:space-between; align-items:center;">
+          <span style="font-weight:600; font-size:13px; color:#1e293b;">🎯 提取目标模式</span>
+          <div style="display:flex; gap:6px;">
+            <button type="button" id="modeBtnFull" class="btn-sm" style="background:var(--primary); color:#fff; font-weight:600; border:1px solid var(--primary);" onclick="switchMode('full')">完整控制计划 (15字段)</button>
+            <button type="button" id="modeBtnCharList" class="btn-sm" style="background:#fff; color:var(--text); border:1px solid #cbd5e1;" onclick="switchMode('char_list')">仅特性清单 (偏召回)</button>
+          </div>
+        </div>
+        <div id="modeHint" style="font-size:11.5px; color:var(--muted); margin-top:4px;">完整模式：提取产品/过程CTQ的公差、量检具方法与判定准则，并匹配分块插件与门禁。</div>
+      </div>
+
       <!-- 第二步：选择标准所属类别 -->
-      <div class="step-block">
+      <div class="step-block" id="step2CatBlock">
         <div class="step-title" style="justify-content: space-between;">
           <div style="display:flex; align-items:center; gap:8px;">
             <span class="step-num">2</span>
@@ -1184,6 +1196,39 @@
 </div>
 
 <script>
+  let currentMode = 'full'; // 'full' | 'char_list'
+
+  function switchMode(mode) {
+    currentMode = mode;
+    const btnFull = document.getElementById('modeBtnFull');
+    const btnChar = document.getElementById('modeBtnCharList');
+    const hint = document.getElementById('modeHint');
+    const catStep = document.getElementById('step2CatBlock');
+    const extractBtn = document.getElementById('extractBtn');
+
+    if (mode === 'char_list') {
+      btnFull.style.background = '#fff';
+      btnFull.style.color = 'var(--text)';
+      btnFull.style.border = '1px solid #cbd5e1';
+      btnChar.style.background = 'var(--primary)';
+      btnChar.style.color = '#fff';
+      btnChar.style.border = '1px solid var(--primary)';
+      hint.textContent = '仅特性清单模式：通读全文列出所有特性名称（中文规范名+原文名），不提取规范/方法/判据，统一模板偏召回。';
+      if (catStep) catStep.style.opacity = '0.5';
+      if (extractBtn) extractBtn.textContent = '🚀 开始提取特性清单';
+    } else {
+      btnFull.style.background = 'var(--primary)';
+      btnFull.style.color = '#fff';
+      btnFull.style.border = '1px solid var(--primary)';
+      btnChar.style.background = '#fff';
+      btnChar.style.color = 'var(--text)';
+      btnChar.style.border = '1px solid #cbd5e1';
+      hint.textContent = '完整模式：提取产品/过程CTQ的公差、量检具方法与判定准则，并匹配分块插件与门禁。';
+      if (catStep) catStep.style.opacity = '1.0';
+      if (extractBtn) extractBtn.textContent = '🚀 开始提取检查项';
+    }
+  }
+
   let selectedFile = null;
   let selectedCategory = 'auto';
   let currentPackage = null;
@@ -1528,6 +1573,7 @@
       const formData = new FormData();
       formData.append('file', selectedFile);
       formData.append('category', selectedCategory);
+      formData.append('mode', currentMode);
       formData.append('llm_provider', activeProviderKey);
       if (localKey) {
         formData.append('llm_api_key', localKey);
@@ -1611,53 +1657,167 @@
     return item.source_page ? `${clauseText} <span style="color:var(--muted); font-size:11px;">(P.${item.source_page})</span>` : clauseText;
   }
 
+  function renderCharClauseCell(item, pkg) {
+    const clauseText = escapeHtml((item.standard_clauses || []).join('、') || '-');
+    let srcUrl = pkg?.standard_info?.source_file_url || '';
+    const fileName = pkg?.standard_info?.file_name || '';
+    const pageNum = item.source_page || 1;
+    const isPdf = srcUrl.toLowerCase().endsWith('.pdf') || fileName.toLowerCase().endsWith('.pdf');
+
+    if (!srcUrl && isPdf && fileName) {
+      const stem = fileName.replace(/\.[^.]+$/, '').replace(/[^a-zA-Z0-9_\-\u4e00-\u9fa5]/g, '_') || 'standard';
+      srcUrl = `/api/source/${stem}_source.pdf`;
+    }
+
+    if (srcUrl && isPdf) {
+      const href = `${encodeURI(srcUrl)}#page=${pageNum}`;
+      const pageLabel = item.source_page ? `<span class="clause-page-tag">(P.${item.source_page})</span>` : '';
+      return `<a class="clause-link" href="${href}" target="_blank" title="点击在新标签页打开 PDF 第 ${pageNum} 页">📄 ${clauseText} ${pageLabel} ↗</a>`;
+    } else if (srcUrl) {
+      return `<a class="clause-link" href="${encodeURI(srcUrl)}" target="_blank" title="点击打开源标准文件">📄 ${clauseText} ↗</a>`;
+    }
+    return item.source_page ? `${clauseText} <span style="color:var(--muted); font-size:11px;">(P.${item.source_page})</span>` : clauseText;
+  }
+
   function renderResult(pkg, excelUrl, jsonUrl) {
     currentPackage = pkg;
     const cov = pkg.coverage_summary;
+    const isCharList = !!pkg.characteristics;
 
     document.getElementById('kpiCategory').textContent = pkg.standard_info.standard_category;
     document.getElementById('kpiClauses').textContent = cov.total_clauses_scanned;
-    document.getElementById('kpiValid').textContent = pkg.check_items.length;
+    const validCount = isCharList ? pkg.characteristics.length : pkg.check_items.length;
+    document.getElementById('kpiValid').textContent = validCount;
     document.getElementById('kpiPending').textContent = pkg.pending_review_items.length;
     document.getElementById('kpiConf').textContent = `${cov.high_confidence} / ${cov.medium_confidence} / ${cov.low_confidence}`;
 
-    document.getElementById('tabCountValid').textContent = pkg.check_items.length;
+    document.getElementById('tabCountValid').textContent = validCount;
     document.getElementById('tabCountPending').textContent = pkg.pending_review_items.length;
 
+    const dlLabel = isCharList ? '📥 导出特性清单 Excel (.xlsx)' : '📥 导出控制计划 Excel (.xlsx)';
     document.getElementById('exportBar').innerHTML = `
-      <a class="btn-dl" href="${excelUrl}" download>📥 导出控制计划 Excel (.xlsx)</a>
+      <a class="btn-dl" href="${excelUrl}" download>${dlLabel}</a>
       <a class="btn-dl secondary" href="${jsonUrl}" download>📥 导出 JSON</a>
     `;
 
-    const tbody = document.getElementById('validTableBody');
-    if (pkg.check_items.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="12" style="text-align:center; padding:30px; color:var(--muted);">暂无直接准入检查项，请查看「待人工确认项」页签</td></tr>';
+    const tableWrap = document.getElementById('viewValid');
+    if (isCharList) {
+      tableWrap.innerHTML = `
+        <table>
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>特性名称 (中文规范名)</th>
+              <th>原文名称</th>
+              <th>是否强制</th>
+              <th>标准条款号</th>
+              <th>原文引用摘录 (溯源)</th>
+              <th>置信度</th>
+              <th>备注</th>
+            </tr>
+          </thead>
+          <tbody id="validTableBody">
+            ${pkg.characteristics.length === 0 ? '<tr><td colspan="8" style="text-align:center; padding:30px; color:var(--muted);">暂无直接准入特性，请查看「待人工确认项」页签</td></tr>' : pkg.characteristics.map((item, idx) => `
+              <tr>
+                <td>${idx + 1}</td>
+                <td style="font-weight:600;">${escapeHtml(item.characteristic_name)}</td>
+                <td style="color:#0369a1; font-weight:500;">${escapeHtml(item.original_name || '-')}</td>
+                <td><span class="badge ${item.is_mandatory ? 'badge-high' : 'badge-low'}">${item.is_mandatory ? '强制' : '非强制/参考'}</span></td>
+                <td style="font-weight:600;">${renderCharClauseCell(item, pkg)}</td>
+                <td><div class="quote-box">${escapeHtml(item.source_quote)}</div></td>
+                <td><span class="badge ${item.confidence === '高' ? 'badge-high' : (item.confidence === '中' ? 'badge-med' : 'badge-low')}">${item.confidence}</span></td>
+                <td style="font-size:12px; color:var(--muted);">${escapeHtml(item.notes || '-')}</td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      `;
     } else {
-      tbody.innerHTML = pkg.check_items.map((item, idx) => `
-        <tr>
-          <td>${idx + 1}</td>
-          <td style="font-weight:600;">${escapeHtml(item.characteristic_name)}</td>
-          <td><span class="badge badge-cat">${escapeHtml(item.characteristic_category)}</span></td>
-          <td>${item.special_char_class ? `<span class="badge badge-low">${escapeHtml(item.special_char_class)}</span>` : '<span style="color:var(--muted);">-</span>'}</td>
-          <td>${escapeHtml(item.specification)}</td>
-          <td>${escapeHtml(item.inspection_method)}</td>
-          <td>${escapeHtml(item.acceptance_criteria)}</td>
-          <td>${escapeHtml(item.sample_size_frequency || '-')}</td>
-          <td style="font-size:11.5px;">
-            ${item.control_method ? `<div><b>控制:</b> ${escapeHtml(item.control_method)}</div>` : ''}
-            ${item.reaction_plan ? `<div><b>反应:</b> ${escapeHtml(item.reaction_plan)}</div>` : ''}
-            ${!item.control_method && !item.reaction_plan ? '<span style="color:var(--muted);">-</span>' : ''}
-          </td>
-          <td style="font-weight:600;">${renderClauseCell(item, pkg)}</td>
-          <td><div class="quote-box">${escapeHtml(item.source_quote)}</div></td>
-          <td><span class="badge ${item.confidence === '高' ? 'badge-high' : (item.confidence === '中' ? 'badge-med' : 'badge-low')}">${item.confidence}</span></td>
-        </tr>
-      `).join('');
+      tableWrap.innerHTML = `
+        <table>
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>特性名称</th>
+              <th>类别</th>
+              <th>特殊特性</th>
+              <th>规范 / 公差</th>
+              <th>检查 / 试验方法</th>
+              <th>判定准则</th>
+              <th>样本容量/频次</th>
+              <th>控制方法 / 反应计划</th>
+              <th>条款号</th>
+              <th>原文引用摘录 (溯源)</th>
+              <th>置信度</th>
+            </tr>
+          </thead>
+          <tbody id="validTableBody">
+            ${pkg.check_items.length === 0 ? '<tr><td colspan="12" style="text-align:center; padding:30px; color:var(--muted);">暂无直接准入检查项，请查看「待人工确认项」页签</td></tr>' : pkg.check_items.map((item, idx) => `
+              <tr>
+                <td>${idx + 1}</td>
+                <td style="font-weight:600;">${escapeHtml(item.characteristic_name)}</td>
+                <td><span class="badge badge-cat">${escapeHtml(item.characteristic_category)}</span></td>
+                <td>${item.special_char_class ? `<span class="badge badge-low">${escapeHtml(item.special_char_class)}</span>` : '<span style="color:var(--muted);">-</span>'}</td>
+                <td>${escapeHtml(item.specification)}</td>
+                <td>${escapeHtml(item.inspection_method)}</td>
+                <td>${escapeHtml(item.acceptance_criteria)}</td>
+                <td>${escapeHtml(item.sample_size_frequency || '-')}</td>
+                <td style="font-size:11.5px;">
+                  ${item.control_method ? `<div><b>控制:</b> ${escapeHtml(item.control_method)}</div>` : ''}
+                  ${item.reaction_plan ? `<div><b>反应:</b> ${escapeHtml(item.reaction_plan)}</div>` : ''}
+                  ${!item.control_method && !item.reaction_plan ? '<span style="color:var(--muted);">-</span>' : ''}
+                </td>
+                <td style="font-weight:600;">${renderClauseCell(item, pkg)}</td>
+                <td><div class="quote-box">${escapeHtml(item.source_quote)}</div></td>
+                <td><span class="badge ${item.confidence === '高' ? 'badge-high' : (item.confidence === '中' ? 'badge-med' : 'badge-low')}">${item.confidence}</span></td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      `;
     }
 
     const pendingBox = document.getElementById('pendingContainer');
     if (pkg.pending_review_items.length === 0) {
-      pendingBox.innerHTML = '<div style="text-align:center; padding:30px; color:var(--success); font-weight:600;">🎉 所有检查项均已通过门禁，无待人工确认项！</div>';
+      pendingBox.innerHTML = '<div style="text-align:center; padding:30px; color:var(--success); font-weight:600;">🎉 所有特性/检查项均已通过门禁，无待人工确认项！</div>';
+    } else if (isCharList) {
+      pendingBox.innerHTML = pkg.pending_review_items.map((item, idx) => `
+        <div class="review-card">
+          <h4>
+            <span style="display:flex; align-items:center; gap:6px; flex-wrap:wrap;">⚠️ 待审核特性 #${idx + 1}：${escapeHtml(item.characteristic_name)}（条款 ${renderCharClauseCell(item, pkg)}）</span>
+            <span class="badge badge-low">置信度：${item.confidence}</span>
+          </h4>
+          <p style="font-size:12px; color:#b45309; margin-bottom:8px;">
+            <strong>拦截原因 / 备注：</strong>${escapeHtml(item.notes || '原文溯源未完全匹配或为低置信度')}
+          </p>
+          <div class="quote-box" style="margin-bottom:10px;">原文引用：${escapeHtml(item.source_quote)}</div>
+          <div class="review-grid">
+            <div>
+              <label style="font-size:11px; color:var(--muted);">特性规范名（中文）：</label>
+              <input type="text" class="form-control" id="revCharName_${idx}" value="${escapeHtml(item.characteristic_name)}" />
+            </div>
+            <div>
+              <label style="font-size:11px; color:var(--muted);">原文名称（逐字匹配原文）：</label>
+              <input type="text" class="form-control" id="revCharOrig_${idx}" value="${escapeHtml(item.original_name)}" />
+            </div>
+            <div>
+              <label style="font-size:11px; color:var(--muted);">条款号（逗号分隔）：</label>
+              <input type="text" class="form-control" id="revCharClauses_${idx}" value="${escapeHtml((item.standard_clauses || []).join(', '))}" />
+            </div>
+            <div>
+              <label style="font-size:11px; color:var(--muted);">是否强制：</label>
+              <select class="form-control" id="revCharMandatory_${idx}">
+                <option value="true" ${item.is_mandatory ? 'selected' : ''}>强制要求</option>
+                <option value="false" ${!item.is_mandatory ? 'selected' : ''}>建议性 / 仅供参考 / 无判据</option>
+              </select>
+            </div>
+          </div>
+          <div style="display:flex; gap:8px; justify-content:flex-end; margin-top:8px;">
+            <button class="btn-sm btn-reject" onclick="handleReview(${idx}, 'reject')">✖️ 驳回剔除</button>
+            <button class="btn-sm btn-approve" onclick="handleReview(${idx}, 'approve')">✔️ 确认准入特性清单</button>
+          </div>
+        </div>
+      `).join('');
     } else {
       pendingBox.innerHTML = pkg.pending_review_items.map((item, idx) => `
         <div class="review-card">
@@ -1709,16 +1869,17 @@
 
     const rep = pkg.validation_report;
     const issues = [
-      ...rep.missing_clause_or_quote,
-      ...rep.unit_inconsistency,
-      ...rep.method_misclassified_as_criteria,
-      ...rep.unmarked_low_confidence
+      ...(rep.missing_clause_or_quote || []),
+      ...(rep.name_not_in_quote || []),
+      ...(rep.unit_inconsistency || []),
+      ...(rep.method_misclassified_as_criteria || []),
+      ...(rep.unmarked_low_confidence || [])
     ];
     document.getElementById('reportSummary').innerHTML = `
       <div style="padding:10px 14px; background:#f8fafc; border:1px solid var(--border); border-radius:8px;">
         <div style="font-weight:600; margin-bottom:6px;">后处理校验结论：</div>
         ${issues.length === 0 ? '<div style="color:var(--success);">✅ 条款与原文引用全部匹配，未发现异常。</div>' : issues.map(i => `<div style="color:var(--danger);">• ${escapeHtml(i)}</div>`).join('')}
-        ${rep.suggestions.map(s => `<div style="color:var(--warning); margin-top:4px;">💡 ${escapeHtml(s)}</div>`).join('')}
+        ${(rep.suggestions || []).map(s => `<div style="color:var(--warning); margin-top:4px;">💡 ${escapeHtml(s)}</div>`).join('')}
       </div>
     `;
     document.getElementById('jsonOutput').textContent = JSON.stringify(pkg, null, 2);
@@ -1727,8 +1888,21 @@
   async function handleReview(idx, action) {
     if (!currentPackage) return;
     const orig = currentPackage.pending_review_items[idx];
+    const isCharList = !!currentPackage.characteristics;
     let updated_item = null;
     if (action === 'approve') {
+      if (isCharList) {
+        const clausesStr = document.getElementById(`revCharClauses_${idx}`)?.value || '';
+        updated_item = {
+          ...orig,
+          characteristic_name: document.getElementById(`revCharName_${idx}`)?.value || orig.characteristic_name,
+          original_name: document.getElementById(`revCharOrig_${idx}`)?.value || orig.original_name,
+          standard_clauses: clausesStr.split(/[,，、;；]/).map(s => s.trim()).filter(Boolean),
+          is_mandatory: document.getElementById(`revCharMandatory_${idx}`)?.value === 'true',
+          confidence: '高',
+          needs_human_review: false,
+        };
+      } else {
       const sCls = (document.getElementById(`revSpecialCls_${idx}`)?.value || '').trim();
       const sFreq = (document.getElementById(`revSampleFreq_${idx}`)?.value || '').trim();
       const cMethod = (document.getElementById(`revCtrlMethod_${idx}`)?.value || '').trim();
@@ -1745,6 +1919,7 @@
         confidence: '高',
         needs_human_review: false,
       };
+      }
     }
 
     const resp = await fetch('/api/approve-review', {

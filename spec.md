@@ -109,6 +109,7 @@ Web 工作台人工审核（支持条款号一键跳转 PDF 对应页码 #page=N
 | `process` | `templates/plugins/process.md` | **工艺标准插件 (v1.1)**：过程特性标注工序前缀、剔除设备定期校验/工装维护条款及 Few-Shot 正反例 |
 | `appearance_performance` | `templates/plugins/appearance_performance.md` | **外观/性能标准插件 (v1.1)**：定性外观要求转化为定量零缺陷判据、保留光源视距与盐雾试验条件及 Few-Shot 正反例 |
 | `validation` | `templates/validation_template.md` | **后处理校验与二次自纠错模板**：指导 LLM 对门禁拦截项（缺失条款/原文、单位不一致、方法误写为判据、单边公差篡改）进行定向修正 |
+| `char_list` | `templates/characteristic_list_template.md` | **仅特性清单模板 (v1.0)**：专用于仅提取特性名称场景，统一内置四类标准的扫描清单，偏召回提取全部可检查特性名称（中文规范名 + 原文名称），不提取规范/公差、检查方法与判定准则 |
 | `gdt_reference` | `templates/references/gdt_symbols.md` | **GD&T 符号标准参考库**：定义直线度 `⎯`、平面度 `⏥`、圆度 `⌯`、圆柱度 `⌭`、线轮廓度 `⌒`、面轮廓度 `⌓`、垂直度 `⊥`、平行度 `∥`、倾斜度 `∠`、位置度 `⌖`、同轴度 `◎`、对称度 `≡`、圆跳动 `↗`、全跳动 `⌕` 共 14 类控制框解析规范 |
 
 ---
@@ -161,6 +162,45 @@ Web 工作台人工审核（支持条款号一键跳转 PDF 对应页码 #page=N
     "unit_inconsistency": [],
     "method_misclassified_as_criteria": [],
     "unmarked_low_confidence": [],
+    "suggestions": []
+  }
+}
+```
+
+### 6.3 仅特性清单模式输出包契约 (`CharacteristicListPackage` v2.1)
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `characteristic_name` | `string` | 是 | 中文控制计划规范特性名称 |
+| `original_name` | `string` | 是 | 特性在原文中的名称（逐字摘录，必须为 `source_quote` 子串） |
+| `standard_clauses` | `list[str]` | 否 | 出现该特性的全部标准条款号 |
+| `source_quote` | `string` | 是 | 原文引用逐字摘录（防幻觉溯源锚点） |
+| `source_page` | `integer \| null` | 否 | 原文所在 PDF 页码（从 1 开始） |
+| `is_mandatory` | `boolean` | 是 | 是否为强制要求（建议性/无判据条款为 `false`） |
+| `confidence` | `enum` | 是 | 提取置信度枚举：`高` / `中` / `低` |
+| `needs_human_review` | `boolean` | 是 | 是否需人工确认（低置信度时强制为 `true`） |
+| `notes` | `string \| null` | 否 | 备注说明或门禁拦截提示 |
+
+```json
+{
+  "standard_info": {
+    "file_name": "example_standard.pdf",
+    "standard_category": "公差/尺寸标准",
+    "template_version": "char_list-v1.0",
+    "source_file_url": "/api/source/example_standard.pdf"
+  },
+  "characteristics": [],
+  "pending_review_items": [],
+  "coverage_summary": {
+    "total_clauses_scanned": 0,
+    "check_items_extracted": 0,
+    "high_confidence": 0,
+    "medium_confidence": 0,
+    "low_confidence": 0
+  },
+  "validation_report": {
+    "missing_clause_or_quote": [],
+    "name_not_in_quote": [],
     "suggestions": []
   }
 }

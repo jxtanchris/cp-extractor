@@ -10,6 +10,8 @@ from typing import Callable, List, Optional, Union
 
 from ..schemas.models import (
     CharacteristicCategory,
+    CharacteristicEntry,
+    CharacteristicListPackage,
     CheckItem,
     ConfidenceLevel,
     CoverageSummary,
@@ -276,6 +278,153 @@ class StandardExtractorPipeline:
 
         validated_package.coverage_summary.total_clauses_scanned = total_clauses
         return validated_package
+
+    # ==================== 仅特性清单模式 (char_list) ====================
+
+    # 精简输出单块很短，可放大分块以减少跨块切断与调用次数
+    CHAR_LIST_CHUNK_CHAR_LIMIT = 8000
+    CHAR_LIST_TEMPLATE_VERSION = "char_list-v1.0"
+    _CONF_RANK = {ConfidenceLevel.LOW: 0, ConfidenceLevel.MEDIUM: 1, ConfidenceLevel.HIGH: 2}
+
+    @staticmethod
+    def _char_name_key(name: str) -> str:
+        """特性名称归一化去重键：去空白、统一全/半角括号、忽略大小写"""
+        key = re.sub(r"\s+", "", name or "").lower()
+        return key.replace("（", "(").replace("）", ")")
+
+    @classmethod
+    def _merge_characteristics(cls, entries: List[CharacteristicEntry]) -> List[CharacteristicEntry]:
+        """跨块/跨条款按归一化特性名称去重，合并条款号；任一出处为强制则视为强制，置信度取最高"""
+        merged: dict = {}
+        order: List[str] = []
+        for entry in entries:
+            key = cls._char_name_key(entry.characteristic_name)
+            if not key:
+                continue
+            if key not in merged:
+                merged[key] = entry.model_copy(deep=True)
+                order.append(key)
+                continue
+            base = merged[key]
+            for clause in entry.standard_clauses:
+                if clause not in base.standard_clauses:
+                    base.standard_clauses.append(clause)
+            base.is_mandatory = base.is_mandatory or entry.is_mandatory
+            if cls._CONF_RANK[entry.confidence] > cls._CONF_RANK[base.confidence]:
+                base.confidence = entry.confidence
+                base.needs_human_review = entry.needs_human_review
+            if base.source_page is None and entry.source_page is not None:
+                base.source_page = entry.source_page
+        return [merged[k] for k in order]
+
+    def _extract_char_chunk_adaptive(self, chunk_text: str, depth: int = 0) -> List[CharacteristicEntry]:
+        """调用 LLM 列出单个分块中的特性；若输出截断/为空失败，二分分块递归重试"""
+        prompt = self.prompt_builder.build_characteristic_list_prompt(context_text=chunk_text)
+        try:
+            raw_response = self.llm_callable(prompt)
+        except ValueError:
+            if depth >= self.MAX_SPLIT_DEPTH or len(chunk_text) < self.MIN_SPLIT_CHARS:
+                raise
+            results: List[CharacteristicEntry] = []
+            for half in self._split_text_in_half(chunk_text):
+                results.extend(self._extract_char_chunk_adaptive(half, depth + 1))
+            return results
+
+        extracted: List[CharacteristicEntry] = []
+        for item in json.loads(raw_response):
+            try:
+                extracted.append(CharacteristicEntry.model_validate(item))
+            except Exception:
+                continue
+        return extracted
+
+    def _rule_based_characteristics(self, content: str, plugin_key: str, manual_category: Optional[str]) -> List[CharacteristicEntry]:
+        """未配置 LLM 时的离线兜底：复用内置结构化提取器结果，仅保留特性名称与溯源信息"""
+        entries: List[CharacteristicEntry] = []
+        for chunk_text in self.split_document_into_chunks(content, max_chars=self.chunk_char_limit):
+            chunk_plugins = self.classifier.classify_chunk_plugins(
+                chunk_text, default_plugin_key=plugin_key, manual_category=manual_category
+            )
+            for pk in chunk_plugins:
+                for item in self._structured_rule_extract(pk, chunk_text):
+                    name = item.characteristic_name
+                    entries.append(CharacteristicEntry(
+                        characteristic_name=name,
+                        # 规则引擎的名称为合成名，仅当其确实出现在原文引用中时才作为原文名称
+                        original_name=name if re.sub(r"\s+", "", name) in re.sub(r"\s+", "", item.source_quote) else "",
+                        standard_clauses=[item.standard_clause] if item.standard_clause else [],
+                        source_quote=item.source_quote,
+                        source_page=item.source_page,
+                        is_mandatory=item.confidence != ConfidenceLevel.LOW,
+                        confidence=item.confidence,
+                        needs_human_review=item.needs_human_review,
+                        notes=item.notes,
+                    ))
+        return entries
+
+    def run_characteristic_list(
+        self,
+        file_name: str,
+        content: str,
+        manual_category: Optional[str] = None,
+        refiner: Optional[Callable[[str, List[dict], List[str]], List[dict]]] = None,
+    ) -> CharacteristicListPackage:
+        """
+        仅特性清单模式流水线：大分块 -> 单一精简模板提取（不走插件路由）-> 按名称去重合并条款
+        -> 精简门禁（原文核对 + 原文名称子串核对）-> 仅对溯源失配项二次自纠错（零丢失对账）。
+        """
+        plugin_key, category_enum = self.classifier.classify(content, manual_category=manual_category)
+
+        if self.llm_callable is not None:
+            raw_entries: List[CharacteristicEntry] = []
+            for chunk_text in self.split_document_into_chunks(content, max_chars=self.CHAR_LIST_CHUNK_CHAR_LIMIT):
+                raw_entries.extend(self._extract_char_chunk_adaptive(chunk_text))
+        else:
+            raw_entries = self._rule_based_characteristics(content, plugin_key, manual_category)
+
+        total_clauses = self.count_clauses(content)
+        package = CharacteristicListPackage(
+            standard_info=StandardInfo(
+                file_name=file_name,
+                standard_category=category_enum.value,
+                template_version=self.CHAR_LIST_TEMPLATE_VERSION,
+            ),
+            characteristics=self._merge_characteristics(raw_entries),
+            coverage_summary=CoverageSummary(total_clauses_scanned=total_clauses),
+        )
+        validated = self.validator.validate_characteristic_list(package, source_full_text=content)
+
+        if refiner is None and self.llm_callable is not None and hasattr(self.llm_callable, "__self__"):
+            refiner = getattr(self.llm_callable.__self__, "refine_characteristics_with_feedback", None)
+
+        report = validated.validation_report
+        hard_errors = report.missing_clause_or_quote + report.name_not_in_quote
+        if refiner is not None and hard_errors and validated.pending_review_items:
+            try:
+                failed: List[CharacteristicEntry] = []
+                soft: List[CharacteristicEntry] = []
+                for item in validated.pending_review_items:
+                    marker = f"[{item.characteristic_name}]"
+                    (failed if any(marker in err for err in hard_errors) else soft).append(item)
+                if failed:
+                    refined_dicts = refiner(content, [i.model_dump(mode="json") for i in failed], hard_errors)
+                    refined = [CharacteristicEntry.model_validate(d) for d in refined_dicts]
+                    # 零丢失对账：LLM 漏返的送修项回退保留原条目
+                    refined_keys = {self._char_name_key(r.characteristic_name) for r in refined}
+                    kept = [f for f in failed if self._char_name_key(f.characteristic_name) not in refined_keys]
+                    if len(refined) == len(failed):
+                        kept = []  # 等长返回视为逐条修正（可能已更名）
+                    retry = CharacteristicListPackage(
+                        standard_info=validated.standard_info,
+                        characteristics=self._merge_characteristics(validated.characteristics + refined + kept + soft),
+                        coverage_summary=CoverageSummary(total_clauses_scanned=total_clauses),
+                    )
+                    validated = self.validator.validate_characteristic_list(retry, source_full_text=content)
+            except Exception:
+                pass
+
+        validated.coverage_summary.total_clauses_scanned = total_clauses
+        return validated
 
     @staticmethod
     def _reconcile_refined_items(
