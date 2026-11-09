@@ -177,6 +177,83 @@ def test_pdf_table_alignment_and_document_chunking():
     assert "| --- | --- | --- | --- |" in formatted
     assert "| >0.5 ~ 3 | ±0.05 | ±0.10 | ±0.20 |" in formatted
 
+    # 1.1 验证防假表格守门与中文稀疏空格自动融合（GB/T 3103.3 前言抗干扰）
+    sparse_chinese_sample = (
+        "G  B  / T  3 1 0 3 . 3 -  2 0 0 0\n"
+        "前  言\n"
+        "本 标 准 等 同 采 用 国 际 标 准 IS O 4 7 5 9 - 3 :2 0 0 0 (( 紧 固 件 公 差 第 3 部 分 ：螺 栓 、 螺 钉 和 螺 母 用 平 垫 圈\n"
+        "a ） 对 c 级 产 品 未 规 定 h 的 尺 寸 公 差 （ 3 . 1 条 ） ；\n"
+    )
+    cleaned_doc = DocumentParser._format_space_aligned_tables(sparse_chinese_sample)
+    assert "GB/T 3103.3-2000" in cleaned_doc
+    assert "前言" in cleaned_doc
+    assert "本标准等同采用国际标准 ISO 4759-3:2000 (紧固件公差第3部分：螺栓、螺钉和螺母用平垫圈" in cleaned_doc
+    assert "对c级产品未规定h的尺寸公差（3.1条）；" in cleaned_doc
+    # 确认普通中文段落绝对没有被误包为 | 列 | 列 | 表格
+    assert "| 本 | 标 | 准 |" not in cleaned_doc
+    assert "| --- |" not in cleaned_doc
+
+    # 1.2 验证引用标准列表（GB/T 1182、1800.2 等）的防误包表格与跨行延续括号 (eqv ISO) 向上缝合
+    raw_reference_standards = (
+        "2引用标准\n\n"
+        "下列标准所包含的条文，通过在本标准中引用而构成为本标准的条文。\n"
+        "| GB/T | 1182-1996形状和位置公差通则、定义、符号和图样表示法（e q v | ISO | 1101:1983) |\n"
+        "| --- | --- | --- | --- |\n"
+        "| GB/T | 1800.2-1998极限与配合基础第2部分：公差、偏差和配合的基本规定 |  |  |\n"
+        "| (eqvISO286-1 | ：1988 ) |  |  |\n"
+        "| GB/T | 1800.4-1999极限与配合标准公差等级和孔、轴的极限偏差表（e q v | ISO | 286-2:1996) |\n"
+        "| GB/T | 5267-1985螺纹紧固件电镀层 |  |  |\n"
+        "| GB/T | 16671-1996形状和位置公差最大实体要求、最小实体要求和可逆要求 |  |  |\n"
+        "( eqvISO2692 ： 1996 )\n"
+    )
+    cleaned_refs = DocumentParser._format_space_aligned_tables(raw_reference_standards)
+    assert "## 2 引用标准" in cleaned_refs
+    assert "- GB/T 1182-1996 形状和位置公差通则、定义、符号和图样表示法 (eqv ISO 1101:1983)" in cleaned_refs
+    assert "- GB/T 1800.2-1998 极限与配合基础第2部分：公差、偏差和配合的基本规定 (eqv ISO 286-1:1988)" in cleaned_refs
+    assert "- GB/T 1800.4-1999 极限与配合标准公差等级和孔、轴的极限偏差表 (eqv ISO 286-2:1996)" in cleaned_refs
+    assert "- GB/T 5267-1985 螺纹紧固件电镀层" in cleaned_refs
+    assert "- GB/T 16671-1996 形状和位置公差最大实体要求、最小实体要求和可逆要求 (eqv ISO 2692:1996)" in cleaned_refs
+    # 确保引用标准绝不包含 Markdown 表格符号
+    assert "| GB/T |" not in cleaned_refs
+    assert "| (eqvISO" not in cleaned_refs
+
+    # 1.3 验证 GB/T 3103.3 第 7 页表 A3 孔的极限偏差（上下偏差纵向折行叠放矩阵融合）
+    stacked_tolerance_page7 = (
+        "<!-- 第 7 页 -->\n"
+        "G  s  /T  3 1 0 3 . 3 -  2 0 0 0\n\n"
+        "表A  3孔的极限偏差m  m\n\n"
+        "│公称直径  │  极限偏差  │\n\n"
+        "│＞      │    │  H    1 3   │  H    1  4   │  H    1  5   │\n\n"
+        "│    │3   │  ＋    0  .  1  4 │  十    0  .  2  5 │  十    0  .  4 │\n"
+        "│    │    │  0   │  0   │  0   │\n\n"
+        "│3    │6   │  ＋    0  .  1  8 │  ＋    0  .  3 │  十    0  .  4  8 │\n"
+        "│    │    │  0   │  0   │  0   │\n\n"
+        "│6   │1  0  │  十    0  .  2  2 │  十    0  .  3  6 │  十     0  .  5 8  │\n"
+        "│    │    │  0   │  0   │  0   │\n"
+    )
+    cleaned_p7 = DocumentParser._format_space_aligned_tables(stacked_tolerance_page7)
+    assert "### 表 A3 孔的极限偏差(mm)" in cleaned_p7
+    assert "| 基本尺寸分段 (mm) | H13 | H14 | H15 |" in cleaned_p7
+    assert "| ≤ 3 | +0.14 / 0 | +0.25 / 0 | +0.4 / 0 |" in cleaned_p7
+    assert "| >3 ~ 6 | +0.18 / 0 | +0.3 / 0 | +0.48 / 0 |" in cleaned_p7
+    assert "| >6 ~ 10 | +0.22 / 0 | +0.36 / 0 | +0.58 / 0 |" in cleaned_p7
+
+    # 1.4 验证第 6 页及任意新文件的通用抽象化（表 A1 平垫圈厚度公差：A级/C级上下偏差通用折叠）
+    stacked_tolerance_page6 = (
+        "表A  1平垫圈厚度公差m  m\n\n"
+        "│公称厚度  │  极限偏差  │\n\n"
+        "│＞      │    │  A 级  │  C 级  │\n\n"
+        "│    │1.5 │  +0.05 │ +0.10 │\n"
+        "│    │    │  -0.05 │ -0.10 │\n\n"
+        "│1.5  │3   │  +0.08 │ +0.15 │\n"
+        "│    │    │  -0.08 │ -0.15 │\n"
+    )
+    cleaned_p6 = DocumentParser._format_space_aligned_tables(stacked_tolerance_page6)
+    assert "### 表 A1 平垫圈厚度公差(mm)" in cleaned_p6
+    assert "| 基本尺寸分段 (mm) | A级 | C级 |" in cleaned_p6
+    assert "| ≤ 1.5 | +0.05 / -0.05 | +0.10 / -0.10 |" in cleaned_p6
+    assert "| >1.5 ~ 3 | +0.08 / -0.08 | +0.15 / -0.15 |" in cleaned_p6
+
     # 2. 验证长文档按章节语义分块并保留顶部标题
     long_doc = (
         "# Q/CP 001-2026 汽车齿轮技术标准\n\n"
@@ -272,8 +349,161 @@ def test_pdf_clause_page_resolution_and_excel_hyperlink(tmp_path: Path):
     cell_p2 = ws.cell(row=4, column=7)
     cell_p3 = ws.cell(row=5, column=7)
     assert "3.1 (P.1)" in str(cell_p1.value)
+    assert cell_p1.hyperlink.target.startswith("http://127.0.0.1:8000")
     assert cell_p1.hyperlink.target.endswith("/api/source/steering_knuckle_source.pdf#page=1")
     assert "3.2 (P.2)" in str(cell_p2.value)
     assert cell_p2.hyperlink.target.endswith("/api/source/steering_knuckle_source.pdf#page=2")
     assert "5.3 (P.3)" in str(cell_p3.value)
     assert cell_p3.hyperlink.target.endswith("/api/source/steering_knuckle_source.pdf#page=3")
+
+
+def test_v2_grill_me_architectural_decisions(tmp_path: Path):
+    """
+    验证 v2.0 规格说明书（Grill-Me 五大核心分支决策）：
+    1. 块级动态路由与单块多插件融合 (classify_chunk_plugins)
+    2. 自学习硬门禁绝对优先（不绕过幻觉/篡改）与严格核心名称匹配 + 强制条款防误删保护
+    3. 二次自纠错精准范围隔离（不送修单纯低置信度项）与零丢失对账 (_reconcile_refined_items)
+    4. CheckItem v2.0 15字段 IATF 16949 扩展与自学习记忆回填
+    """
+    from src.cp_extractor.core.classifier import StandardClassifier
+    from src.cp_extractor.core.extractor import StandardExtractorPipeline
+    from src.cp_extractor.core.feedback_learner import FeedbackRuleLearner
+    from src.cp_extractor.core.lexicon_db import LexiconDB
+
+    # 分支 1：测试复合型块级多插件路由
+    classifier = StandardClassifier()
+    composite_chunk = (
+        "3.1 钢的化学成分熔炼分析、屈服强度与抗拉强度必须符合规定。\n"
+        "4.1 未注公差与形位公差 GD&T 位置度必须符合 ISO 2768。"
+    )
+    plugins = classifier.classify_chunk_plugins(composite_chunk, default_plugin_key="tolerance")
+    assert "material" in plugins and "tolerance" in plugins
+
+    # 分支 2 & 4：测试自学习硬门禁绝对优先、严格核心名称匹配、强制条款防误删及 v2.0 扩展字段回填
+    db_file = tmp_path / "test_lex.db"
+    lex_db = LexiconDB(db_path=db_file)
+    learner = FeedbackRuleLearner(db_path=db_file)
+    learner.set_threshold(1)
+    validator = QualityGateValidator(lexicon_db=lex_db, feedback_learner=learner)
+
+    # 录入一条带 v2.0 扩展字段的 approve 自学习规则
+    approved_sample = CheckItem(
+        characteristic_name="局部非关键翻边轮廓度",
+        characteristic_category=CharacteristicCategory.DIMENSION,
+        special_char_class="SC",
+        specification="轮廓度 ⌓ ≤ 0.5 mm",
+        inspection_method="三坐标测量机",
+        acceptance_criteria="轮廓度 ≤ 0.5 mm",
+        sample_size_frequency="5件/每班",
+        control_method="SPC Xbar-R图",
+        reaction_plan="立即停机隔离并100%全检追溯",
+        standard_clause="5.4",
+        source_quote="局部非关键翻边轮廓度建议参考历史经验控制",
+        confidence=ConfidenceLevel.HIGH,
+        needs_human_review=False,
+    )
+    learner.record_review_decision("公差/尺寸标准", approved_sample, action="approve", updated_item=approved_sample)
+
+    # 当该项出现硬性幻觉错误（原文引用失配）时，自学习 approve 严禁绕过硬门禁，但应回填 v2.0 扩展字段
+    hallucinated_item = CheckItem(
+        characteristic_name="局部非关键翻边轮廓度",
+        characteristic_category=CharacteristicCategory.DIMENSION,
+        specification="待定",
+        inspection_method="待确认",
+        acceptance_criteria="待确认",
+        standard_clause="5.4",
+        source_quote="一段原文中根本不存在的幻觉引文",
+        confidence=ConfidenceLevel.LOW,
+        needs_human_review=True,
+    )
+    pkg_hard = ExtractionPackage(
+        standard_info=StandardInfo(file_name="test.pdf", standard_category="公差/尺寸标准"),
+        check_items=[hallucinated_item],
+    )
+    res_hard = validator.validate_package(pkg_hard, source_full_text="5.4 局部非关键翻边轮廓度建议参考历史经验控制。")
+    assert len(res_hard.check_items) == 0
+    assert len(res_hard.pending_review_items) == 1
+    assert res_hard.pending_review_items[0].special_char_class == "SC"
+    assert res_hard.pending_review_items[0].sample_size_frequency == "5件/每班"
+    assert res_hard.pending_review_items[0].control_method == "SPC Xbar-R图"
+    assert res_hard.pending_review_items[0].reaction_plan == "立即停机隔离并100%全检追溯"
+
+    # 测试严格核心名称匹配（驳回「翻边轮廓度」不得模糊误伤「关键安装面翻边轮廓度」）与高置信度强制条款防静默删除
+    rej_sample = CheckItem(
+        characteristic_name="翻边轮廓度",
+        characteristic_category=CharacteristicCategory.DIMENSION,
+        specification="参考",
+        inspection_method="待定",
+        acceptance_criteria="待定",
+        standard_clause="5.5",
+        source_quote="翻边轮廓度",
+        confidence=ConfidenceLevel.LOW,
+        needs_human_review=True,
+    )
+    learner.record_review_decision("公差/尺寸标准", rej_sample, action="reject")
+    assert learner.match_active_rule("公差/尺寸标准", "关键安装面翻边轮廓度") is None
+    assert learner.match_active_rule("公差/尺寸标准", "【冲压工序】翻边轮廓度") is not None
+
+    # 当新文档中「翻边轮廓度」是高置信度明确公差强制项时，命中 reject 规则应转入待确认清单而非静默删除
+    mandatory_item = CheckItem(
+        characteristic_name="翻边轮廓度",
+        characteristic_category=CharacteristicCategory.DIMENSION,
+        specification="⌓ 0.20 mm A B",
+        inspection_method="三坐标",
+        acceptance_criteria="轮廓度 ≤ 0.20 mm",
+        standard_clause="5.5",
+        source_quote="5.5 翻边轮廓度 ⌓ 0.20 mm A B",
+        confidence=ConfidenceLevel.HIGH,
+        needs_human_review=False,
+    )
+    pkg_rej = ExtractionPackage(
+        standard_info=StandardInfo(file_name="test2.pdf", standard_category="公差/尺寸标准"),
+        check_items=[mandatory_item],
+    )
+    res_rej = validator.validate_package(pkg_rej, source_full_text="5.5 翻边轮廓度 ⌓ 0.20 mm A B")
+    assert len(res_rej.pending_review_items) == 1
+    assert "防误删" in (res_rej.pending_review_items[0].notes or "")
+
+    # 分支 3：测试二次自纠错仅送修硬错误项（保留单纯低置信度项）且在 LLM 漏返时零丢失兜底
+    sent_to_refiner = []
+
+    def mock_extract(_p: str) -> str:
+        import json
+        return json.dumps([
+            {
+                "standard_clause": "3.1",
+                "source_quote": "孔径 Ø16.00 +0.05/-0.00 mm",
+                "characteristic_name": "硬错误单边公差项",
+                "characteristic_category": "尺寸",
+                "specification": "Ø16.00 ± 0.05 mm",
+                "inspection_method": "塞规",
+                "acceptance_criteria": "Ø16.00 ± 0.05 mm",
+                "confidence": "高",
+                "needs_human_review": False,
+            },
+            {
+                "standard_clause": "3.2",
+                "source_quote": "倒角建议参考经验控制",
+                "characteristic_name": "单纯低置信度建议项",
+                "characteristic_category": "尺寸",
+                "specification": "参考经验",
+                "inspection_method": "待定",
+                "acceptance_criteria": "待定",
+                "confidence": "低",
+                "needs_human_review": True,
+            },
+        ], ensure_ascii=False)
+
+    def mock_empty_refiner(src: str, failed_items: list, errors: list, val_tpl: str) -> list:
+        sent_to_refiner.extend(i["characteristic_name"] for i in failed_items)
+        # 模拟 LLM 在重提时异常漏返空列表
+        return []
+
+    pipe = StandardExtractorPipeline(llm_callable=mock_extract, llm_refiner=mock_empty_refiner)
+    res_pipe = pipe.run(
+        "test_zero_drop.md",
+        "3.1 孔径 Ø16.00 +0.05/-0.00 mm\n3.2 倒角建议参考经验控制",
+        manual_category="tolerance",
+    )
+    assert sent_to_refiner == ["硬错误单边公差项"]
+    assert len(res_pipe.pending_review_items) == 2

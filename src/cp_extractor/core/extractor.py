@@ -25,7 +25,7 @@ class StandardExtractorPipeline:
     """标准→控制计划检查项提取全链路引擎"""
 
     # 长文档按章节/条款自动分块的阈值（字符数），避免单次输出超长导致漏提或合并
-    DEFAULT_CHUNK_CHAR_LIMIT = 3500
+    DEFAULT_CHUNK_CHAR_LIMIT = 2200
 
     def __init__(
         self,
@@ -128,6 +128,57 @@ class StandardExtractorPipeline:
                 unique.append(item)
         return unique
 
+    # 分块因输出超长被截断时，二分重试的最小分块字符数与最大递归深度
+    MIN_SPLIT_CHARS = 400
+    MAX_SPLIT_DEPTH = 3
+
+    @staticmethod
+    def _split_text_in_half(text: str) -> List[str]:
+        """按最靠近中点的换行把文本一分为二（尽量不切断表格行）"""
+        mid = len(text) // 2
+        left = text.rfind("\n", 0, mid)
+        right = text.find("\n", mid)
+        candidates = [p for p in (left, right) if p > 0]
+        cut = min(candidates, key=lambda p: abs(p - mid)) if candidates else mid
+        return [part for part in (text[:cut].strip(), text[cut:].strip()) if part]
+
+    def _extract_chunk_adaptive(
+        self,
+        chunk_text: str,
+        plugin_key: str,
+        manual_category: Optional[str],
+        depth: int = 0,
+    ) -> List[CheckItem]:
+        """
+        调用 LLM 提取单个分块；若因输出超长截断/正文为空而失败，自动二分该分块后递归重试，
+        使任意新文档无需人工拆分即可完成提取。
+        """
+        chunk_plugins = self.classifier.classify_chunk_plugins(
+            chunk_text,
+            default_plugin_key=plugin_key,
+            manual_category=manual_category,
+        )
+        target_plugin_arg = chunk_plugins[0] if len(chunk_plugins) == 1 else chunk_plugins
+        chunk_prompt = self.prompt_builder.build_extraction_prompt(target_plugin_arg, context_text=chunk_text)
+        try:
+            raw_response = self.llm_callable(chunk_prompt)
+        except ValueError:
+            if depth >= self.MAX_SPLIT_DEPTH or len(chunk_text) < self.MIN_SPLIT_CHARS:
+                raise
+            results: List[CheckItem] = []
+            for half in self._split_text_in_half(chunk_text):
+                results.extend(self._extract_chunk_adaptive(half, plugin_key, manual_category, depth + 1))
+            return results
+
+        extracted: List[CheckItem] = []
+        for item in json.loads(raw_response):
+            try:
+                extracted.append(CheckItem.model_validate(item))
+            except Exception:
+                # 单条结构不合法时跳过，避免整份文档提取失败
+                continue
+        return extracted
+
     def run(
         self,
         file_name: str,
@@ -142,18 +193,26 @@ class StandardExtractorPipeline:
         meta, _ = self.prompt_builder.get_plugin(plugin_key)
         template_version = f"v{meta.get('version', '1.0')}"
 
-        # 3. 执行提取（若注入了 LLM 调用器则支持按章节分块调用 LLM，否则使用内置结构化基准提取器）
+        # 3. 执行提取（支持章节块级动态路由与多插件融合；若未配置 LLM 则使用内置结构化基准提取器）
+        chunks = self.split_document_into_chunks(content, max_chars=self.chunk_char_limit)
         if self.llm_callable is not None:
-            chunks = self.split_document_into_chunks(content, max_chars=self.chunk_char_limit)
             all_extracted: List[CheckItem] = []
             for chunk_text in chunks:
-                chunk_prompt = self.prompt_builder.build_extraction_prompt(plugin_key, context_text=chunk_text)
-                raw_response = self.llm_callable(chunk_prompt)
-                raw_data = json.loads(raw_response)
-                all_extracted.extend(CheckItem.model_validate(item) for item in raw_data)
+                all_extracted.extend(
+                    self._extract_chunk_adaptive(chunk_text, plugin_key, manual_category)
+                )
             items = self._deduplicate_items(all_extracted)
         else:
-            items = self._structured_rule_extract(plugin_key, content)
+            all_rule_items: List[CheckItem] = []
+            for chunk_text in chunks:
+                chunk_plugins = self.classifier.classify_chunk_plugins(
+                    chunk_text,
+                    default_plugin_key=plugin_key,
+                    manual_category=manual_category,
+                )
+                for pk in chunk_plugins:
+                    all_rule_items.extend(self._structured_rule_extract(pk, chunk_text))
+            items = self._deduplicate_items(all_rule_items)
 
         # 4. 封装初始输出包
         total_clauses = self.count_clauses(content)
@@ -170,37 +229,80 @@ class StandardExtractorPipeline:
         # 5. 运行后处理规则校验与人工确认门禁分流
         validated_package = self.validator.validate_package(package, source_full_text=content)
 
-        # 6. 二次语义校验与打回重提闭环 (Self-Correction)：
-        # 当存在硬性提取偏差（原文引用不匹配、单边公差被篡改、试验方法与判定准则混淆）且配有 llm_refiner 时，自动触发一次定向修正
+        # 6. 二次语义校验与打回重提闭环 (Targeted Self-Correction & Zero-Drop Fallback)：
+        # 仅将触发硬性提取偏差（原文失配、单边公差篡改、方法与判据混淆）的项送入 llm_refiner，
+        # 单纯低置信度/参考尺寸项保留在待确认清单不送修；且对送修项逐一对账防止静默丢失。
         hard_errors = (
             validated_package.validation_report.missing_clause_or_quote
             + validated_package.validation_report.method_misclassified_as_criteria
         )
         if self.llm_refiner is not None and hard_errors and validated_package.pending_review_items:
             try:
-                val_instruction = self.prompt_builder.get_validation_template()
-                failed_dicts = [
-                    item.model_dump(mode="json") for item in validated_package.pending_review_items
-                ]
-                refined_dicts = self.llm_refiner(
-                    content, failed_dicts, hard_errors, val_instruction
-                )
-                refined_items = [CheckItem.model_validate(d) for d in refined_dicts]
-                merged_items = self._deduplicate_items(validated_package.check_items + refined_items)
-                retry_package = ExtractionPackage(
-                    standard_info=validated_package.standard_info,
-                    check_items=merged_items,
-                    coverage_summary=CoverageSummary(total_clauses_scanned=total_clauses),
-                )
-                validated_package = self.validator.validate_package(
-                    retry_package, source_full_text=content
-                )
+                hard_failed_items: List[CheckItem] = []
+                soft_pending_items: List[CheckItem] = []
+                for item in validated_package.pending_review_items:
+                    tag_marker = f"[{item.characteristic_name}]"
+                    if any(tag_marker in err for err in hard_errors):
+                        hard_failed_items.append(item)
+                    else:
+                        soft_pending_items.append(item)
+
+                if hard_failed_items:
+                    val_instruction = self.prompt_builder.get_validation_template()
+                    failed_dicts = [
+                        item.model_dump(mode="json") for item in hard_failed_items
+                    ]
+                    refined_dicts = self.llm_refiner(
+                        content, failed_dicts, hard_errors, val_instruction
+                    )
+                    refined_items = [CheckItem.model_validate(d) for d in refined_dicts]
+
+                    # 零丢失对账：若 LLM 在重提时漏返了某条送修项，自动回退保留原待审项
+                    reconciled_hard = self._reconcile_refined_items(hard_failed_items, refined_items)
+                    merged_items = self._deduplicate_items(
+                        validated_package.check_items + reconciled_hard + soft_pending_items
+                    )
+                    retry_package = ExtractionPackage(
+                        standard_info=validated_package.standard_info,
+                        check_items=merged_items,
+                        coverage_summary=CoverageSummary(total_clauses_scanned=total_clauses),
+                    )
+                    validated_package = self.validator.validate_package(
+                        retry_package, source_full_text=content
+                    )
             except Exception:
                 # 若二次修正网络异常或解析失败，安全保留首次门禁拦截结果交由人工复核
                 pass
 
         validated_package.coverage_summary.total_clauses_scanned = total_clauses
         return validated_package
+
+    @staticmethod
+    def _reconcile_refined_items(
+        original_failed: List[CheckItem],
+        refined_items: List[CheckItem],
+    ) -> List[CheckItem]:
+        """
+        对二次自纠错返回的检查项与送修项进行对账，防止 LLM 漏返导致待审项静默丢失。
+        """
+        if not refined_items:
+            return list(original_failed)
+
+        result = list(refined_items)
+        for idx, orig in enumerate(original_failed):
+            orig_clause = orig.standard_clause.strip()
+            orig_name = orig.characteristic_name.strip()
+            matched = any(
+                (r.characteristic_name.strip() == orig_name)
+                or (orig_clause and r.standard_clause.strip() == orig_clause and len(original_failed) == len(refined_items))
+                for r in refined_items
+            )
+            if not matched:
+                if len(refined_items) == len(original_failed):
+                    # 等长重命名修正场景已包含在 result[idx] 中
+                    continue
+                result.append(orig)
+        return result
 
     def _structured_rule_extract(self, plugin_key: str, content: str) -> List[CheckItem]:
         """
@@ -231,6 +333,7 @@ class StandardExtractorPipeline:
                 specification="Ø16.00 +0.05/-0.00 mm",
                 inspection_method="气动量仪或塞规（100%检验）",
                 acceptance_criteria="孔径在 Ø16.00 ~ Ø16.05 mm 范围内（通规通，止规止）",
+                sample_size_frequency="100% 检验",
                 standard_clause="3.1",
                 source_quote="主定位孔孔径 D1 必须控制在 Ø16.00 +0.05/-0.00 mm，采用气动量仪或塞规进行 100% 检验。",
                 confidence=ConfidenceLevel.HIGH,
@@ -244,6 +347,7 @@ class StandardExtractorPipeline:
                 specification="240.0 ± 0.15 mm",
                 inspection_method="三坐标测量机（CMM）",
                 acceptance_criteria="239.85 mm ≤ L1 ≤ 240.15 mm",
+                sample_size_frequency="首末件及每班抽检",
                 standard_clause="3.2",
                 source_quote="前后安装孔中心距 L1 应为 240.0 ± 0.15 mm，使用三坐标测量机（CMM）按首末件及每班抽检。",
                 confidence=ConfidenceLevel.HIGH,

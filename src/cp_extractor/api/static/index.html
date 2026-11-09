@@ -642,6 +642,9 @@
     <span class="tag" id="headerProviderTag">DeepSeek@Christan</span>
   </div>
   <div class="top-controls">
+    <button class="btn-top" id="topParsedTextBtn" style="background:#eff6ff; color:var(--primary); border-color:#bfdbfe; font-weight:600;" onclick="openParsedTextModal()">
+      👁️ 查看 PDF/文档解析原文本
+    </button>
     <button class="btn-top" onclick="openLearningModal()">
       🧠 自学习规则 (<span id="topLearnedCount">0</span>)
     </button>
@@ -679,6 +682,12 @@
           <div class="sub-text" id="dzSub">支持 PDF(含扫描件)、Word、截图(.png/.jpg) 及 Markdown</div>
           <img id="dzPreviewImg" style="display:none; max-width:100%; max-height:110px; margin-top:8px; border-radius:6px; border:1px solid var(--border); object-fit:contain;" alt="截图预览" />
         </label>
+        <div id="fileActionsBar" style="display:flex; margin-top:8px; justify-content:space-between; align-items:center;">
+          <span id="fileParsedMeta" style="font-size:12px; color:var(--muted);">尚未选择文件（可先点击右侧按钮查看已载入文本）</span>
+          <button type="button" class="btn-sm" style="background:#f0f9ff; color:var(--primary); border:1px solid #bfdbfe; font-weight:600; padding:4px 10px; cursor:pointer;" onclick="openParsedTextModal()">
+            👁️ 查看 PDF/文档解析原文本
+          </button>
+        </div>
       </div>
 
       <!-- 第二步：选择标准所属类别 -->
@@ -693,7 +702,11 @@
           </button>
         </div>
         <div class="cat-grid" id="catGrid">
-          <div class="cat-card selected" data-cat="tolerance" onclick="selectCategory('tolerance', this)">
+          <div class="cat-card selected" data-cat="auto" onclick="selectCategory('auto', this)" style="grid-column: span 2; background:#f0f9ff; border-color:#93c5fd;">
+            <div class="cat-name">🔀 自动识别 / 复合型标准（章节块级动态路由）</div>
+            <div class="cat-desc">按章节分块自动匹配公差/材料/工艺/外观插件，单块跨类时自动合并多插件</div>
+          </div>
+          <div class="cat-card" data-cat="tolerance" onclick="selectCategory('tolerance', this)">
             <div class="cat-name">📐 公差/尺寸标准</div>
             <div class="cat-desc">线性公差、GD&T、未注公差表</div>
           </div>
@@ -738,6 +751,9 @@
       <div>
         <span>提取结果与质量门禁审核</span>
         <span id="engineUsedBadge" class="badge badge-med" style="margin-left:8px; display:none;"></span>
+        <button type="button" id="headerViewTextBtn" class="btn-sm" style="display:none; margin-left:8px; background:#eff6ff; color:var(--primary); border:1px solid #bfdbfe; font-weight:600; padding:2px 8px; font-size:11.5px; cursor:pointer;" onclick="openParsedTextModal()">
+          👁️ 查看解析原文本
+        </button>
       </div>
       <div style="display:flex; gap:8px;" id="exportBar"></div>
     </div>
@@ -790,9 +806,12 @@
               <th>#</th>
               <th>特性名称</th>
               <th>类别</th>
+              <th>特殊特性</th>
               <th>规范 / 公差</th>
               <th>检查 / 试验方法</th>
               <th>判定准则</th>
+              <th>样本容量/频次</th>
+              <th>控制方法 / 反应计划</th>
               <th>条款号</th>
               <th>原文引用摘录 (溯源)</th>
               <th>置信度</th>
@@ -800,7 +819,7 @@
           </thead>
           <tbody id="validTableBody">
             <tr>
-              <td colspan="9" style="text-align:center; padding:60px 20px; color:var(--muted);">
+              <td colspan="12" style="text-align:center; padding:60px 20px; color:var(--muted);">
                 请在左侧 <b>① 上传 PDF/Word 标准文档</b> &rarr; <b>② 选择文档所属类别</b> &rarr; <b>③ 点击「开始提取检查项」</b>
               </td>
             </tr>
@@ -1130,10 +1149,46 @@
   </div>
 </div>
 
+<!-- PDF/文档解析原文本查看弹窗 -->
+<div class="modal-backdrop" id="parsedTextModal">
+  <div class="modal modal-lg" style="width:960px; max-height:90vh; display:flex; flex-direction:column;">
+    <div class="prompt-modal-header">
+      <div>
+        <h3 style="margin:0; font-size:16px;">👁️ 标准文档解析原文本预览 (DocumentParser 输出)</h3>
+        <div style="font-size:12px; color:var(--muted); margin-top:2px;" id="parsedTextSubTitle">
+          展示本地解析层提取的结构化文本（含自动注入的页码标记 <code>&lt;!-- 第 X 页 --&gt;</code> 及 Markdown 表格还原结果），即送入大模型的核心事实源。
+        </div>
+      </div>
+      <button class="btn-sm" style="background:#e2e8f0; color:#334155;" onclick="closeParsedTextModal()">✖ 关闭</button>
+    </div>
+
+    <div style="padding:12px 18px; display:flex; flex-direction:column; gap:10px; flex:1; overflow:hidden;">
+      <!-- 分块与统计信息条 -->
+      <div id="parsedChunksBar" style="display:flex; flex-wrap:wrap; gap:8px; align-items:center; background:#f8fafc; border:1px solid var(--border); padding:8px 12px; border-radius:6px; font-size:12px;">
+        <span id="parsedMetaInfo" style="font-weight:600; color:#0f172a;">未加载</span>
+      </div>
+
+      <!-- 文本内容区域 -->
+      <textarea id="parsedTextContent" class="prompt-textarea" style="flex:1; min-height:420px; font-family:'SFMono-Regular', Consolas, Menlo, monospace; font-size:12.5px; line-height:1.6;" readonly placeholder="暂无解析文本..."></textarea>
+    </div>
+
+    <div class="prompt-modal-footer">
+      <button type="button" class="btn-sm" style="background:#f1f5f9; color:#334155;" onclick="copyParsedText()">
+        📋 复制原文本
+      </button>
+      <button type="button" class="btn-primary" style="width:auto; padding:7px 20px; font-size:13.5px;" onclick="closeParsedTextModal()">
+        关闭
+      </button>
+    </div>
+  </div>
+</div>
+
 <script>
   let selectedFile = null;
-  let selectedCategory = 'tolerance';
+  let selectedCategory = 'auto';
   let currentPackage = null;
+  let currentParsedText = '';
+  let currentParsedMeta = null;
   let serverHasEnvKey = false;
   let allLlmProviders = [];
   let activeProviderKey = 'deepseek';
@@ -1364,7 +1419,7 @@
     }
   }
 
-  function setFile(file) {
+  async function setFile(file) {
     selectedFile = file;
     const dz = document.getElementById('dropzone');
     dz.classList.add('has-file');
@@ -1380,6 +1435,35 @@
     } else {
       previewImg.style.display = 'none';
       previewImg.src = '';
+    }
+
+    // 重置并异步预解析文档原文本，便于用户上传后即可点击预览
+    currentParsedText = '';
+    currentParsedMeta = null;
+    const actionsBar = document.getElementById('fileActionsBar');
+    const metaSpan = document.getElementById('fileParsedMeta');
+    actionsBar.style.display = 'flex';
+    metaSpan.textContent = '⏳ 正在解析文档文本/表格结构...';
+
+    try {
+      const fd = new FormData();
+      fd.append('file', file);
+      const res = await fetch('/api/upload', { method: 'POST', body: fd });
+      if (res.ok) {
+        const d = await res.json();
+        currentParsedText = d.content || '';
+        currentParsedMeta = {
+          file_name: d.file_name,
+          parsed_length: d.parsed_length,
+          detected_category: d.detected_category,
+          chunks_info: d.chunks_info || [],
+        };
+        metaSpan.textContent = `已就绪：解析出 ${d.parsed_length} 字符 · 建议主类别: ${d.detected_category}`;
+      } else {
+        metaSpan.textContent = '文档预解析提示: 上传完成，点击提取时将正式解析';
+      }
+    } catch (e) {
+      metaSpan.textContent = '文档已选择';
     }
   }
 
@@ -1472,6 +1556,19 @@
       badge.textContent = data.engine_used;
       msg.textContent = `✅ 提取完成！共解析 ${data.parsed_length} 字符。`;
 
+      // 提取完成后更新解析文本数据，并显示顶部快捷按钮
+      if (data.parsed_text) {
+        currentParsedText = data.parsed_text;
+      }
+      currentParsedMeta = {
+        file_name: selectedFile ? selectedFile.name : 'standard.pdf',
+        parsed_length: data.parsed_length,
+        detected_category: data.package?.standard_info?.standard_category || '',
+        chunks_info: data.chunks_info || [],
+      };
+      const headerBtn = document.getElementById('headerViewTextBtn');
+      if (headerBtn) headerBtn.style.display = 'inline-block';
+
       if (data.source_file_url && data.package && data.package.standard_info) {
         data.package.standard_info.source_file_url = data.source_file_url;
       }
@@ -1534,16 +1631,23 @@
 
     const tbody = document.getElementById('validTableBody');
     if (pkg.check_items.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="9" style="text-align:center; padding:30px; color:var(--muted);">暂无直接准入检查项，请查看「待人工确认项」页签</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="12" style="text-align:center; padding:30px; color:var(--muted);">暂无直接准入检查项，请查看「待人工确认项」页签</td></tr>';
     } else {
       tbody.innerHTML = pkg.check_items.map((item, idx) => `
         <tr>
           <td>${idx + 1}</td>
           <td style="font-weight:600;">${escapeHtml(item.characteristic_name)}</td>
           <td><span class="badge badge-cat">${escapeHtml(item.characteristic_category)}</span></td>
+          <td>${item.special_char_class ? `<span class="badge badge-low">${escapeHtml(item.special_char_class)}</span>` : '<span style="color:var(--muted);">-</span>'}</td>
           <td>${escapeHtml(item.specification)}</td>
           <td>${escapeHtml(item.inspection_method)}</td>
           <td>${escapeHtml(item.acceptance_criteria)}</td>
+          <td>${escapeHtml(item.sample_size_frequency || '-')}</td>
+          <td style="font-size:11.5px;">
+            ${item.control_method ? `<div><b>控制:</b> ${escapeHtml(item.control_method)}</div>` : ''}
+            ${item.reaction_plan ? `<div><b>反应:</b> ${escapeHtml(item.reaction_plan)}</div>` : ''}
+            ${!item.control_method && !item.reaction_plan ? '<span style="color:var(--muted);">-</span>' : ''}
+          </td>
           <td style="font-weight:600;">${renderClauseCell(item, pkg)}</td>
           <td><div class="quote-box">${escapeHtml(item.source_quote)}</div></td>
           <td><span class="badge ${item.confidence === '高' ? 'badge-high' : (item.confidence === '中' ? 'badge-med' : 'badge-low')}">${item.confidence}</span></td>
@@ -1578,6 +1682,22 @@
               <label style="font-size:11px; color:var(--muted);">判定准则：</label>
               <input type="text" class="form-control" id="revCriteria_${idx}" value="${escapeHtml(item.acceptance_criteria)}" />
             </div>
+            <div>
+              <label style="font-size:11px; color:var(--muted);">特殊特性分类 (如 CC/SC)：</label>
+              <input type="text" class="form-control" id="revSpecialCls_${idx}" value="${escapeHtml(item.special_char_class || '')}" placeholder="标准未明确可留空" />
+            </div>
+            <div>
+              <label style="font-size:11px; color:var(--muted);">样本容量 / 抽样频次：</label>
+              <input type="text" class="form-control" id="revSampleFreq_${idx}" value="${escapeHtml(item.sample_size_frequency || '')}" placeholder="如 100% / 5件/每班" />
+            </div>
+            <div>
+              <label style="font-size:11px; color:var(--muted);">控制方法：</label>
+              <input type="text" class="form-control" id="revCtrlMethod_${idx}" value="${escapeHtml(item.control_method || '')}" placeholder="如 SPC控制图 / 首末件记录表" />
+            </div>
+            <div>
+              <label style="font-size:11px; color:var(--muted);">反应计划：</label>
+              <input type="text" class="form-control" id="revReactionPlan_${idx}" value="${escapeHtml(item.reaction_plan || '')}" placeholder="如 停机隔离并100%全检追溯" />
+            </div>
           </div>
           <div style="display:flex; gap:8px; justify-content:flex-end;">
             <button class="btn-sm btn-reject" onclick="handleReview(${idx}, 'reject')">✖️ 驳回剔除</button>
@@ -1609,11 +1729,19 @@
     const orig = currentPackage.pending_review_items[idx];
     let updated_item = null;
     if (action === 'approve') {
+      const sCls = (document.getElementById(`revSpecialCls_${idx}`)?.value || '').trim();
+      const sFreq = (document.getElementById(`revSampleFreq_${idx}`)?.value || '').trim();
+      const cMethod = (document.getElementById(`revCtrlMethod_${idx}`)?.value || '').trim();
+      const rPlan = (document.getElementById(`revReactionPlan_${idx}`)?.value || '').trim();
       updated_item = {
         ...orig,
+        special_char_class: sCls || null,
         specification: document.getElementById(`revSpec_${idx}`).value,
         inspection_method: document.getElementById(`revMethod_${idx}`).value,
         acceptance_criteria: document.getElementById(`revCriteria_${idx}`).value,
+        sample_size_frequency: sFreq || null,
+        control_method: cMethod || null,
+        reaction_plan: rPlan || null,
         confidence: '高',
         needs_human_review: false,
       };
@@ -1651,6 +1779,51 @@
         textEl.textContent = data.learning_event.message;
       }
     }
+  }
+
+  function openParsedTextModal() {
+    const modal = document.getElementById('parsedTextModal');
+    const ta = document.getElementById('parsedTextContent');
+    const metaInfo = document.getElementById('parsedMetaInfo');
+    const chunksBar = document.getElementById('parsedChunksBar');
+
+    ta.value = currentParsedText || '（暂未获取到解析原文本，请先上传文件或启动提取）';
+
+    const fName = currentParsedMeta?.file_name || selectedFile?.name || '未命名文档';
+    const cLen = currentParsedText ? currentParsedText.length : 0;
+    const cat = currentParsedMeta?.detected_category || '自动识别';
+    const chunks = currentParsedMeta?.chunks_info || [];
+
+    let chunksHtml = `<span style="font-weight:600; color:#0f172a;">📄 ${escapeHtml(fName)}</span>`;
+    chunksHtml += `<span class="badge" style="background:#e0f2fe; color:#0369a1;">字符总数: ${cLen}</span>`;
+    chunksHtml += `<span class="badge badge-cat">识别类别: ${escapeHtml(cat)}</span>`;
+
+    if (chunks.length > 0) {
+      chunksHtml += `<span style="color:#64748b; margin-left:4px;">章节分块 (${chunks.length} 块):</span>`;
+      chunks.forEach(ch => {
+        const pNames = ch.matched_plugins.join('+');
+        chunksHtml += `<span class="badge" style="background:#f1f5f9; color:#334155;" title="第 ${ch.chunk_index} 块 (${ch.char_length} 字符)">块${ch.chunk_index}: ${escapeHtml(pNames)}</span>`;
+      });
+    }
+
+    chunksBar.innerHTML = chunksHtml;
+    modal.classList.add('open');
+  }
+
+  function closeParsedTextModal() {
+    document.getElementById('parsedTextModal').classList.remove('open');
+  }
+
+  function copyParsedText() {
+    const ta = document.getElementById('parsedTextContent');
+    if (!ta.value) return;
+    navigator.clipboard.writeText(ta.value).then(() => {
+      alert('已复制解析原文本到剪贴板！');
+    }).catch(() => {
+      ta.select();
+      document.execCommand('copy');
+      alert('已复制解析原文本！');
+    });
   }
 
   function openModal() {
@@ -2312,7 +2485,7 @@
           <td>${statusBadge}</td>
           <td>
             ${isApprove ? `
-              <div style="display:grid; grid-template-columns: 1fr 1fr; gap:6px;">
+              <div style="display:grid; grid-template-columns: repeat(3, 1fr); gap:6px;">
                 <div>
                   <span style="font-size:10.5px; color:var(--muted);">检查方法:</span>
                   <input type="text" class="form-control" style="font-size:12px; padding:4px 7px;" id="learnMethod_${r.id}" value="${escapeHtml(r.learned_method)}" />
@@ -2321,8 +2494,24 @@
                   <span style="font-size:10.5px; color:var(--muted);">判定准则:</span>
                   <input type="text" class="form-control" style="font-size:12px; padding:4px 7px;" id="learnCriteria_${r.id}" value="${escapeHtml(r.learned_criteria)}" />
                 </div>
+                <div>
+                  <span style="font-size:10.5px; color:var(--muted);">特殊特性 (如 CC/SC):</span>
+                  <input type="text" class="form-control" style="font-size:12px; padding:4px 7px;" id="learnSpecialCls_${r.id}" value="${escapeHtml(r.learned_special_char_class || '')}" />
+                </div>
+                <div>
+                  <span style="font-size:10.5px; color:var(--muted);">样本容量/频次:</span>
+                  <input type="text" class="form-control" style="font-size:12px; padding:4px 7px;" id="learnSampleFreq_${r.id}" value="${escapeHtml(r.learned_sample_frequency || '')}" />
+                </div>
+                <div>
+                  <span style="font-size:10.5px; color:var(--muted);">控制方法:</span>
+                  <input type="text" class="form-control" style="font-size:12px; padding:4px 7px;" id="learnCtrlMethod_${r.id}" value="${escapeHtml(r.learned_control_method || '')}" />
+                </div>
+                <div>
+                  <span style="font-size:10.5px; color:var(--muted);">反应计划:</span>
+                  <input type="text" class="form-control" style="font-size:12px; padding:4px 7px;" id="learnReactionPlan_${r.id}" value="${escapeHtml(r.learned_reaction_plan || '')}" />
+                </div>
               </div>
-            ` : `<span style="font-size:12px; color:var(--muted);">匹配该特性时自动从提取结果中静默过滤剔除</span>`}
+            ` : `<span style="font-size:12px; color:var(--muted);">匹配该特性时：待审/建议项自动剔除；若新标准带明确强制公差则转入待确认清单防误删</span>`}
           </td>
           <td>
             <div style="display:flex; gap:5px; flex-wrap:wrap;">
@@ -2356,9 +2545,17 @@
   async function toggleLearnedRuleActive(ruleId, targetActive) {
     const methodEl = document.getElementById(`learnMethod_${ruleId}`);
     const criteriaEl = document.getElementById(`learnCriteria_${ruleId}`);
+    const clsEl = document.getElementById(`learnSpecialCls_${ruleId}`);
+    const freqEl = document.getElementById(`learnSampleFreq_${ruleId}`);
+    const ctrlEl = document.getElementById(`learnCtrlMethod_${ruleId}`);
+    const reactEl = document.getElementById(`learnReactionPlan_${ruleId}`);
     const payload = { is_active: targetActive };
     if (methodEl) payload.learned_method = methodEl.value;
     if (criteriaEl) payload.learned_criteria = criteriaEl.value;
+    if (clsEl) payload.learned_special_char_class = clsEl.value;
+    if (freqEl) payload.learned_sample_frequency = freqEl.value;
+    if (ctrlEl) payload.learned_control_method = ctrlEl.value;
+    if (reactEl) payload.learned_reaction_plan = reactEl.value;
 
     const resp = await fetch(`/api/learning/rules/${ruleId}`, {
       method: 'PUT',
@@ -2375,12 +2572,20 @@
   async function saveLearnedRuleEdits(ruleId) {
     const methodEl = document.getElementById(`learnMethod_${ruleId}`);
     const criteriaEl = document.getElementById(`learnCriteria_${ruleId}`);
+    const clsEl = document.getElementById(`learnSpecialCls_${ruleId}`);
+    const freqEl = document.getElementById(`learnSampleFreq_${ruleId}`);
+    const ctrlEl = document.getElementById(`learnCtrlMethod_${ruleId}`);
+    const reactEl = document.getElementById(`learnReactionPlan_${ruleId}`);
     const resp = await fetch(`/api/learning/rules/${ruleId}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         learned_method: methodEl ? methodEl.value : '',
         learned_criteria: criteriaEl ? criteriaEl.value : '',
+        learned_special_char_class: clsEl ? clsEl.value : '',
+        learned_sample_frequency: freqEl ? freqEl.value : '',
+        learned_control_method: ctrlEl ? ctrlEl.value : '',
+        learned_reaction_plan: reactEl ? reactEl.value : '',
       })
     });
     if (resp.ok) {

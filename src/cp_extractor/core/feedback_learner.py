@@ -80,9 +80,13 @@ class FeedbackRuleLearner:
                     action TEXT NOT NULL DEFAULT 'approve',
                     approve_count INTEGER NOT NULL DEFAULT 0,
                     reject_count INTEGER NOT NULL DEFAULT 0,
+                    learned_special_char_class TEXT NOT NULL DEFAULT '',
                     learned_specification TEXT NOT NULL DEFAULT '',
                     learned_method TEXT NOT NULL DEFAULT '',
                     learned_criteria TEXT NOT NULL DEFAULT '',
+                    learned_sample_frequency TEXT NOT NULL DEFAULT '',
+                    learned_control_method TEXT NOT NULL DEFAULT '',
+                    learned_reaction_plan TEXT NOT NULL DEFAULT '',
                     sample_clause TEXT NOT NULL DEFAULT '',
                     sample_quote TEXT NOT NULL DEFAULT '',
                     is_active INTEGER NOT NULL DEFAULT 0,
@@ -91,6 +95,20 @@ class FeedbackRuleLearner:
                 )
                 """
             )
+            # 兼容已有 SQLite 表平滑迁移新增 v2.0 IATF 16949 字段列
+            existing_cols = {
+                r["name"] for r in conn.execute("PRAGMA table_info(learned_rules)").fetchall()
+            }
+            for col_name in (
+                "learned_special_char_class",
+                "learned_sample_frequency",
+                "learned_control_method",
+                "learned_reaction_plan",
+            ):
+                if col_name not in existing_cols:
+                    conn.execute(
+                        f"ALTER TABLE learned_rules ADD COLUMN {col_name} TEXT NOT NULL DEFAULT ''"
+                    )
             conn.commit()
 
     @staticmethod
@@ -103,6 +121,16 @@ class FeedbackRuleLearner:
         cleaned = cleaned.replace("（", "(").replace("）", ")")
         cleaned = re.sub(r"\s+", " ", cleaned)
         return cleaned.lower()
+
+    @classmethod
+    def extract_core_characteristic_name(cls, name: str) -> str:
+        """
+        剥离特性名称前导的【...工序】或[...]前缀后返回归一化核心名称，
+        用于严格同源匹配（禁止宽泛子串模糊包含匹配）。
+        """
+        norm = cls.normalize_characteristic_name(name)
+        core = re.sub(r"^(?:【[^】]+】|\[[^\]]+\])\s*", "", norm).strip()
+        return core or norm
 
     @classmethod
     def resolve_category_pair(cls, raw_category: str) -> Tuple[str, str]:
@@ -188,6 +216,10 @@ class FeedbackRuleLearner:
         spec_val = (final_item.specification or "").strip()
         method_val = (final_item.inspection_method or "").strip()
         criteria_val = (final_item.acceptance_criteria or "").strip()
+        special_cls_val = (final_item.special_char_class or "").strip()
+        sample_freq_val = (final_item.sample_size_frequency or "").strip()
+        ctrl_method_val = (final_item.control_method or "").strip()
+        reaction_val = (final_item.reaction_plan or "").strip()
         clause_val = (final_item.standard_clause or "").strip()
         quote_val = (final_item.source_quote or "").strip()
 
@@ -209,9 +241,10 @@ class FeedbackRuleLearner:
                     INSERT INTO learned_rules (
                         pattern_key, plugin_key, standard_category, characteristic_name,
                         action, approve_count, reject_count,
-                        learned_specification, learned_method, learned_criteria,
+                        learned_special_char_class, learned_specification, learned_method, learned_criteria,
+                        learned_sample_frequency, learned_control_method, learned_reaction_plan,
                         sample_clause, sample_quote, is_active, promoted_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CASE WHEN ? = 1 THEN datetime('now', 'localtime') ELSE NULL END)
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CASE WHEN ? = 1 THEN datetime('now', 'localtime') ELSE NULL END)
                     """,
                     (
                         pattern_key,
@@ -221,9 +254,13 @@ class FeedbackRuleLearner:
                         action,
                         app_cnt,
                         rej_cnt,
+                        special_cls_val,
                         spec_val,
                         method_val,
                         criteria_val,
+                        sample_freq_val,
+                        ctrl_method_val,
+                        reaction_val,
                         clause_val,
                         quote_val,
                         is_active,
@@ -249,9 +286,13 @@ class FeedbackRuleLearner:
                         action = ?,
                         approve_count = ?,
                         reject_count = ?,
+                        learned_special_char_class = CASE WHEN ? != '' THEN ? ELSE learned_special_char_class END,
                         learned_specification = CASE WHEN ? != '' THEN ? ELSE learned_specification END,
                         learned_method = CASE WHEN ? != '' THEN ? ELSE learned_method END,
                         learned_criteria = CASE WHEN ? != '' THEN ? ELSE learned_criteria END,
+                        learned_sample_frequency = CASE WHEN ? != '' THEN ? ELSE learned_sample_frequency END,
+                        learned_control_method = CASE WHEN ? != '' THEN ? ELSE learned_control_method END,
+                        learned_reaction_plan = CASE WHEN ? != '' THEN ? ELSE learned_reaction_plan END,
                         sample_clause = CASE WHEN ? != '' THEN ? ELSE sample_clause END,
                         sample_quote = CASE WHEN ? != '' THEN ? ELSE sample_quote END,
                         is_active = ?,
@@ -264,12 +305,20 @@ class FeedbackRuleLearner:
                         dominant_action,
                         app_cnt,
                         rej_cnt,
+                        special_cls_val,
+                        special_cls_val,
                         spec_val,
                         spec_val,
                         method_val,
                         method_val,
                         criteria_val,
                         criteria_val,
+                        sample_freq_val,
+                        sample_freq_val,
+                        ctrl_method_val,
+                        ctrl_method_val,
+                        reaction_val,
+                        reaction_val,
                         clause_val,
                         clause_val,
                         quote_val,
@@ -341,6 +390,7 @@ class FeedbackRuleLearner:
 
     @staticmethod
     def _row_to_dict(row: sqlite3.Row) -> Dict[str, Any]:
+        keys = row.keys()
         return {
             "id": row["id"],
             "pattern_key": row["pattern_key"],
@@ -350,9 +400,13 @@ class FeedbackRuleLearner:
             "action": row["action"],
             "approve_count": row["approve_count"],
             "reject_count": row["reject_count"],
+            "learned_special_char_class": row["learned_special_char_class"] if "learned_special_char_class" in keys else "",
             "learned_specification": row["learned_specification"],
             "learned_method": row["learned_method"],
             "learned_criteria": row["learned_criteria"],
+            "learned_sample_frequency": row["learned_sample_frequency"] if "learned_sample_frequency" in keys else "",
+            "learned_control_method": row["learned_control_method"] if "learned_control_method" in keys else "",
+            "learned_reaction_plan": row["learned_reaction_plan"] if "learned_reaction_plan" in keys else "",
             "sample_clause": row["sample_clause"],
             "sample_quote": row["sample_quote"],
             "is_active": bool(row["is_active"]),
@@ -395,9 +449,9 @@ class FeedbackRuleLearner:
         characteristic_name: str,
     ) -> Optional[Dict[str, Any]]:
         """
-        在后处理门禁中查找是否有匹配当前检查项的已生效自学习规则：
+        在后处理门禁中查找是否有匹配当前检查项的已生效自学习规则（严格匹配，禁止宽泛子串包含匹配）：
         1. 优先精确匹配归一化 pattern_key；
-        2. 其次在同一标准类别下进行双向核心特性词包含匹配（长度 >= 4）。
+        2. 其次在同一标准类别下匹配剥离【工序前缀】后的核心特性名称完全一致项。
         """
         plugin_key, _ = self.resolve_category_pair(standard_category)
         pattern_key = self.build_pattern_key(plugin_key, characteristic_name)
@@ -409,17 +463,16 @@ class FeedbackRuleLearner:
             if exact:
                 return self._row_to_dict(exact)
 
-            # 同类别模糊包含匹配（例如 "表面洛氏硬度" 与 "表面洛氏硬度 HRB"）
             candidates = conn.execute(
                 "SELECT * FROM learned_rules WHERE plugin_key = ? AND is_active = 1",
                 (plugin_key,),
             ).fetchall()
 
-        norm_target = self.normalize_characteristic_name(characteristic_name)
-        if len(norm_target) >= 4:
+        core_target = self.extract_core_characteristic_name(characteristic_name)
+        if core_target:
             for row in candidates:
-                norm_rule = self.normalize_characteristic_name(row["characteristic_name"])
-                if len(norm_rule) >= 4 and (norm_rule in norm_target or norm_target in norm_rule):
+                core_rule = self.extract_core_characteristic_name(row["characteristic_name"])
+                if core_rule and core_rule == core_target:
                     return self._row_to_dict(row)
         return None
 
@@ -440,14 +493,18 @@ class FeedbackRuleLearner:
                 method_hint = f"，检查方法填「{r['learned_method']}」" if r["learned_method"] else ""
                 criteria_hint = f"，判定准则填「{r['learned_criteria']}」" if r["learned_criteria"] else ""
                 spec_hint = f"，规范填「{r['learned_specification']}」" if r["learned_specification"] else ""
+                cls_hint = f"，特殊特性分类填「{r['learned_special_char_class']}」" if r.get("learned_special_char_class") else ""
+                freq_hint = f"，抽样容量与频次填「{r['learned_sample_frequency']}」" if r.get("learned_sample_frequency") else ""
+                ctrl_hint = f"，控制方法填「{r['learned_control_method']}」" if r.get("learned_control_method") else ""
+                react_hint = f"，反应计划填「{r['learned_reaction_plan']}」" if r.get("learned_reaction_plan") else ""
                 lines.append(
                     f"{idx}. 【已学习自动准入项：{name}】遇到涉及「{name}」的条款时（即使原文带有参考/建议表述），"
                     f"质量工程师已确认必须纳入控制计划：请将其提取为正式检查项，强制设置 `\"confidence\": \"高\"`、"
-                    f"`\"needs_human_review\": false`{spec_hint}{method_hint}{criteria_hint}。"
+                    f"`\"needs_human_review\": false`{cls_hint}{spec_hint}{method_hint}{criteria_hint}{freq_hint}{ctrl_hint}{react_hint}。"
                 )
             else:
                 lines.append(
-                    f"{idx}. 【已学习自动剔除项：{name}】质量工程师已多次驳回「{name}」，遇到该项请直接忽略跳过，不要提取。"
+                    f"{idx}. 【已学习自动剔除项：{name}】质量工程师已多次驳回建议性/非受控的「{name}」，若原文无明确强制公差请直接忽略跳过。"
                 )
         return "\n".join(lines)
 
@@ -456,11 +513,15 @@ class FeedbackRuleLearner:
         rule_id: int,
         action: Optional[str] = None,
         is_active: Optional[bool] = None,
+        learned_special_char_class: Optional[str] = None,
         learned_specification: Optional[str] = None,
         learned_method: Optional[str] = None,
         learned_criteria: Optional[str] = None,
+        learned_sample_frequency: Optional[str] = None,
+        learned_control_method: Optional[str] = None,
+        learned_reaction_plan: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """手动启用/暂停规则，或编辑自学习规则的默认方法与判据"""
+        """手动启用/暂停规则，或编辑自学习规则的默认方法、判据与 IATF 16949 扩展字段"""
         with self._connect() as conn:
             existing = conn.execute("SELECT * FROM learned_rules WHERE id = ?", (rule_id,)).fetchone()
             if not existing:
@@ -468,23 +529,31 @@ class FeedbackRuleLearner:
 
             new_action = action if action in ("approve", "reject") else existing["action"]
             new_active = (1 if is_active else 0) if is_active is not None else existing["is_active"]
+            new_cls = learned_special_char_class.strip() if learned_special_char_class is not None else existing["learned_special_char_class"]
             new_spec = learned_specification.strip() if learned_specification is not None else existing["learned_specification"]
             new_method = learned_method.strip() if learned_method is not None else existing["learned_method"]
             new_criteria = learned_criteria.strip() if learned_criteria is not None else existing["learned_criteria"]
+            new_freq = learned_sample_frequency.strip() if learned_sample_frequency is not None else existing["learned_sample_frequency"]
+            new_ctrl = learned_control_method.strip() if learned_control_method is not None else existing["learned_control_method"]
+            new_react = learned_reaction_plan.strip() if learned_reaction_plan is not None else existing["learned_reaction_plan"]
 
             conn.execute(
                 """
                 UPDATE learned_rules
                 SET action = ?,
                     is_active = ?,
+                    learned_special_char_class = ?,
                     learned_specification = ?,
                     learned_method = ?,
                     learned_criteria = ?,
+                    learned_sample_frequency = ?,
+                    learned_control_method = ?,
+                    learned_reaction_plan = ?,
                     promoted_at = CASE WHEN ? = 1 AND promoted_at IS NULL THEN datetime('now', 'localtime') ELSE promoted_at END,
                     updated_at = datetime('now', 'localtime')
                 WHERE id = ?
                 """,
-                (new_action, new_active, new_spec, new_method, new_criteria, new_active, rule_id),
+                (new_action, new_active, new_cls, new_spec, new_method, new_criteria, new_freq, new_ctrl, new_react, new_active, rule_id),
             )
             conn.commit()
             row = conn.execute("SELECT * FROM learned_rules WHERE id = ?", (rule_id,)).fetchone()

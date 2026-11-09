@@ -32,12 +32,16 @@ class StandardCategory(str, Enum):
 
 
 class CheckItem(BaseModel):
-    """单条控制计划检查项数据模型"""
+    """单条控制计划检查项数据模型（v2.0 15字段 IATF 16949 标准契约）"""
     characteristic_name: str = Field(..., description="特性名称（控制计划术语）")
     characteristic_category: CharacteristicCategory = Field(..., description="特性类别：尺寸/材料/工艺参数/外观/性能")
+    special_char_class: Optional[str] = Field(default=None, description="特殊特性分类（如 CC/SC/PTC/关键特性/重要特性，未明确时为 null）")
     specification: str = Field(..., description="规范或公差，保留原文数值、单位、判定描述")
     inspection_method: str = Field(..., description="检查方法，如卡尺、拉伸试验、目视、盐雾试验")
     acceptance_criteria: str = Field(..., description="判定准则，合格/不合格的明确条件")
+    sample_size_frequency: Optional[str] = Field(default=None, description="样本容量与抽样频次（如 100%、5件/每班、每批首末件，未明确时为 null）")
+    control_method: Optional[str] = Field(default=None, description="控制方法（如 SPC控制图、首末件记录表、防错点检表、在线连续监控，未明确时为 null）")
+    reaction_plan: Optional[str] = Field(default=None, description="反应计划（如 立即停机隔离、标识不良品并100%追溯，未明确时为 null）")
     standard_clause: str = Field(..., description="标准条款号或章节号")
     source_page: Optional[int] = Field(default=None, ge=1, description="标准条款或原文所在的 PDF 页码（从 1 开始）")
     source_quote: str = Field(..., description="原文引用摘录")

@@ -4,7 +4,7 @@
 """
 
 from pathlib import Path
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, Union
 import yaml
 
 from .feedback_learner import FeedbackRuleLearner
@@ -29,14 +29,19 @@ DEFAULT_TEMPLATES: Dict[str, Dict[str, str]] = {
             "   - 原文引用 (`source_quote`)：逐字摘录原文关键句（严禁改写或缩略数值），作为后续字段的唯一事实依据\n"
             '   - 特性名称 (`characteristic_name`)：用控制计划术语命名（若为 GD&T 需注明基准关系，如"位置度 ⌖ (相对于基准 A-B-C)"）\n'
             "   - 特性类别 (`characteristic_category`)：尺寸/材料/工艺参数/外观/性能\n"
+            "   - 特殊特性分类 (`special_char_class`)：如 CC/SC/PTC/关键特性/重要特性，仅在原文明确标注时提取，否则填 null\n"
             "   - 规范或公差 (`specification`)：逐字保留原文数值、单位、正负号，严禁四舍五入或改写；单边公差（如 `+0.05/-0.00`）必须原样保留，严禁改写为 `±0.05`\n"
             "   - 检查方法 (`inspection_method`)：只填量检具、仪器或试验标准名称（如卡尺、三坐标测量机、按 GB/T 228.1 拉伸试验）\n"
             "   - 判定准则 (`acceptance_criteria`)：只填合格/不合格的明确数值边界或状态条件，严禁把量检具名称填入此字段\n"
+            "   - 样本容量与抽样频次 (`sample_size_frequency`)：如 100%、5件/每班、首末件抽检，仅在原文明确提及时提取，否则填 null（严禁编造）\n"
+            "   - 控制方法 (`control_method`)：如 SPC控制图、首末件记录单、防错点检表、在线连续监控记录，仅在原文明确提及时提取，否则填 null\n"
+            "   - 反应计划 (`reaction_plan`)：如 停机隔离、标识不良品并100%追溯，仅在原文明确提及时提取，否则填 null（严禁编造）\n"
             "   - 置信度 (`confidence`)：高/中/低\n"
             "   - 是否需人工确认 (`needs_human_review`)：是/否\n"
             '4. 无法确定或字迹模糊无法辨认的内容，严禁猜测或编造，必须将置信度设为"低"且标记"需人工确认"，并在 notes 中说明位置与原因。\n'
             "5. 输出为符合指定 JSON Schema 的 JSON 对象，并附一份可读摘要表。\n"
-            '- 【建议性条款拦截规则】对于带有"宜、参考、由供需双方协商、不做交货否决判据"的条款，仍需提取为检查项，但必须将 confidence 设为"低"且 needs_human_review 设为 true，交由质量工程师裁定是否纳入控制计划。'
+            '- 【建议性条款拦截规则】对于带有"宜、参考、由供需双方协商、不做交货否决判据"的条款，仍需提取为检查项，但必须将 confidence 设为"低"且 needs_human_review 设为 true，交由质量工程师裁定是否纳入控制计划。\n'
+            "- 【CTQ & GD&T 专项规则】① 严禁提取带圆括号的参考尺寸（如 (120)、(Ø62)）；② 单边公差（如 +0.05/-0.00）必须 100% 逐字保留，严禁折算改写为 ±0.05；③ 提取 GD&T 形位公差（⎯, ⏥, ⌯, ⌭, ⌒, ⌓, ⊥, ∥, ∠, ⌖, ◎, ≡, ↗, ⌕）时需注明关联基准（如 A-B-C）并完整保留控制框描述。"
         ),
     },
     "tolerance": {
@@ -170,27 +175,34 @@ class PromptBuilder:
         _, body = self._parse_frontmatter(content)
         return body
 
-    def build_extraction_prompt(self, category_key: str, context_text: Optional[str] = None) -> str:
+    def build_extraction_prompt(
+        self,
+        category_key: Union[str, List[str]],
+        context_text: Optional[str] = None,
+    ) -> str:
         """
-        组装提示词：公共基础模板 + 类别专用插件 (+ 自学习历史复核规则) (+ 待提取文本)
+        组装提示词：公共基础模板 + 类别专用插件(支持单插件或多插件联合注入) (+ 自学习历史复核规则) (+ 待提取文本)
         """
         base = self.get_base_template()
-        meta, plugin_body = self.get_plugin(category_key)
-        plugin_title = meta.get("name", category_key)
+        plugin_keys = [category_key] if isinstance(category_key, str) else list(category_key)
+        if not plugin_keys:
+            plugin_keys = ["tolerance"]
 
-        prompt_parts = [
-            base,
-            "",
-            f"--- 类别专用指导要求（{plugin_title}） ---",
-            plugin_body,
-        ]
-
-        try:
-            learned_block = FeedbackRuleLearner().build_prompt_injection_block(category_key)
-            if learned_block:
-                prompt_parts.extend(["", learned_block])
-        except Exception:
-            pass
+        prompt_parts = [base]
+        for pk in plugin_keys:
+            meta, plugin_body = self.get_plugin(pk)
+            plugin_title = meta.get("name", pk)
+            prompt_parts.extend([
+                "",
+                f"--- 类别专用指导要求（{plugin_title}） ---",
+                plugin_body,
+            ])
+            try:
+                learned_block = FeedbackRuleLearner().build_prompt_injection_block(pk)
+                if learned_block:
+                    prompt_parts.extend(["", learned_block])
+            except Exception:
+                pass
 
         if context_text:
             prompt_parts.extend([

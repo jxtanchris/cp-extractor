@@ -25,7 +25,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 JSON_SCHEMA_INSTRUCTION = """
---- 严格 JSON 输出格式要求（顺序锚定防幻觉） ---
+--- 严格 JSON 输出格式要求（顺序锚定防幻觉 v2.0 15字段契约） ---
 请严格输出合法的 JSON 对象（不要输出多余的解释文字）。
 【生成顺序强约束】：每个检查项对象必须严格按照下方字段顺序生成——先定条款号 (`standard_clause`) 与逐字原文引用 (`source_quote`) 作为事实锚点，再基于该原文推导特性名称、公差规范、检查方法与判定准则，严禁脱离原文编造或篡改单边公差：
 {
@@ -36,15 +36,20 @@ JSON_SCHEMA_INSTRUCTION = """
       "source_quote": "原文引用（必须逐字摘录标准原文中的关键原句片段，单条控制在80字以内，不得改写符号或数值）",
       "characteristic_name": "特性名称（控制计划术语）",
       "characteristic_category": "尺寸 | 材料 | 工艺参数 | 外观 | 性能（五选一）",
+      "special_char_class": "特殊特性分类（如 CC/SC/PTC/关键特性，仅在原文明确标注时填写，否则填 null）",
       "specification": "规范或公差（保留原文数值、单位、正负号与GD&T符号，单边公差如+0.05/-0.00严禁改写为±0.05）",
       "inspection_method": "检查/试验方法（只填量检具、仪器或试验标准，如三坐标、按GB/T 228.1拉伸试验机、目视等）",
       "acceptance_criteria": "判定准则（只填合格/不合格的明确数值边界或外观状态条件，严禁把试验仪器名称填入此字段）",
+      "sample_size_frequency": "样本容量与抽样频次（如 100%、5件/每班、每批首末件，仅在原文明确提及时填写，否则填 null，严禁编造）",
+      "control_method": "控制方法（如 SPC控制图、首末件记录表、防错点检表、在线连续监控记录，仅在原文明确提及时填写，否则填 null）",
+      "reaction_plan": "反应计划（如 停机隔离、标识不良品并100%追溯，仅在原文明确提及时填写，否则填 null，严禁编造）",
       "confidence": "高 | 中 | 低（三选一）",
       "needs_human_review": false,
       "notes": "备注说明（可选，对模糊或存疑项说明原因）"
     }
   ]
 }
+【极其重要】：只输出包含上述 JSON 对象的 ```json ``` 代码块，严禁输出任何多余的 Markdown 总结表格、导言、分析过程或解释文字！必须直接以 ```json 开始！
 重要完整性约束：表格中的每一行尺寸分段、每一个化学成分元素必须独立生成一条检查项对象（若原文带有 `<!-- 第 X 页 -->` 标记，请将该页码整数填入 `source_page`，否则填 null），确保 JSON 完整闭合不被截断。
 """
 
@@ -565,8 +570,14 @@ class LLMClient:
                 payload["response_format"] = {"type": "json_object"}
                 resp = client.post(f"{self.base_url}/chat/completions", headers=headers, json=payload)
 
-            # 兼容性降级：若部分第三方模型因不支持 response_format 或 max_tokens=8192 报 HTTP 400，自动剥离 response_format 并调低 max_tokens 重试
-            if resp.status_code == 400 and ("response_format" in payload or payload.get("max_tokens", 0) > 4096):
+            # 兼容性降级：若部分第三方模型因不支持 response_format 报 HTTP 400，优先剥离 response_format 重试（保留 max_tokens=8192）
+            if resp.status_code == 400 and "response_format" in payload:
+                fallback_payload = dict(payload)
+                fallback_payload.pop("response_format", None)
+                resp = client.post(f"{self.base_url}/chat/completions", headers=headers, json=fallback_payload)
+
+            # 若依然报 400 且由于 max_tokens 过大导致（例如某些受限提供商限制 max_tokens <= 4096），调小 max_tokens 重试
+            if resp.status_code == 400 and payload.get("max_tokens", 0) > 4096:
                 fallback_payload = dict(payload)
                 fallback_payload.pop("response_format", None)
                 fallback_payload["max_tokens"] = 4096
@@ -577,7 +588,74 @@ class LLMClient:
                 raise RuntimeError(f"{self.provider_short_name} API 调用失败 (HTTP {resp.status_code}): {detail}")
 
             data = resp.json()
-            return data["choices"][0]["message"]["content"]
+            choice = data["choices"][0]
+            message = choice.get("message", {})
+            content = message.get("content") or ""
+            finish_reason = choice.get("finish_reason")
+
+            # 思考型模型（如 deepseek-flash / reasoner）可能把全部输出 Token 耗在思维链上，正文为空。
+            # DeepSeek 下自动切换到非思考模型 deepseek-chat 重试一次，避免用户必须手动切换模型。
+            if not content.strip() and finish_reason == "length" and self.provider == "deepseek" and payload["model"] != "deepseek-chat":
+                retry_payload = dict(payload)
+                retry_payload["model"] = "deepseek-chat"
+                retry_payload["temperature"] = self.temperature if self.temperature <= 1.0 else 0.0
+                retry_payload["response_format"] = {"type": "json_object"}
+                retry_resp = client.post(f"{self.base_url}/chat/completions", headers=headers, json=retry_payload)
+                if retry_resp.status_code == 200:
+                    choice = retry_resp.json()["choices"][0]
+                    message = choice.get("message", {})
+                    content = message.get("content") or ""
+                    finish_reason = choice.get("finish_reason")
+                    # 记住回退结果：同一次提取的后续分块直接使用 deepseek-chat，避免每块都白白耗尽思考 Token
+                    if content.strip():
+                        self.model = "deepseek-chat"
+
+            # 仅当思维链中确实含有检查项 JSON 时才用作兜底（否则会把推理草稿误当 JSON 解析）
+            if not content.strip():
+                reasoning = message.get("reasoning_content") or ""
+                if '"characteristic_name"' in reasoning:
+                    content = reasoning
+
+            if not content.strip():
+                if finish_reason == "length":
+                    raise ValueError(
+                        f"当前模型（{self.model}）把输出 Token 全部耗在了深度思考上，正文为空。"
+                        "请在【切换模型】中改用非思考模型（如 deepseek-chat）后重试。"
+                    )
+                raise ValueError(f"大模型返回了空内容 (finish_reason={finish_reason})")
+
+            return content
+
+    @staticmethod
+    def _extract_items_list(obj: Any) -> Optional[List[Dict[str, Any]]]:
+        """从解析后的 JSON 对象中提取检查项列表，兼容各类模型自定义包装键名与嵌套结构"""
+        if isinstance(obj, list):
+            return obj
+        if isinstance(obj, dict):
+            # 常见候选列表键名
+            candidate_keys = (
+                "items",
+                "check_items",
+                "data",
+                "results",
+                "extracted_characteristics",
+                "characteristics",
+                "checkItems",
+                "extracted_items",
+                "inspection_items",
+                "summary_table",
+                "table",
+                "records",
+            )
+            for key in candidate_keys:
+                if key in obj and isinstance(obj[key], list):
+                    return obj[key]
+            # 启发式兜底：遍历字典的所有值，寻找包含检查项特征的列表
+            for v in obj.values():
+                if isinstance(v, list) and v and isinstance(v[0], dict):
+                    if any(k in v[0] for k in ("characteristic_name", "specification", "item_name", "name")):
+                        return v
+        return None
 
     @staticmethod
     def _salvage_truncated_json(text: str) -> List[Dict[str, Any]]:
@@ -594,12 +672,9 @@ class LLMClient:
             for suffix in ("", "]", "]}"):
                 try:
                     obj = json.loads(candidate_prefix + suffix)
-                    if isinstance(obj, dict):
-                        for key in ("items", "check_items", "data", "results"):
-                            if key in obj and isinstance(obj[key], list):
-                                return obj[key]
-                    elif isinstance(obj, list):
-                        return obj
+                    items = LLMClient._extract_items_list(obj)
+                    if items is not None:
+                        return items
                 except json.JSONDecodeError:
                     pass
             search_pos = brace_idx
@@ -613,7 +688,7 @@ class LLMClient:
                 break
             try:
                 obj, end = decoder.raw_decode(text, start)
-                if isinstance(obj, dict) and "characteristic_name" in obj:
+                if isinstance(obj, dict) and any(k in obj for k in ("characteristic_name", "specification", "item_name")):
                     items.append(obj)
                     idx = end
                     continue
@@ -642,13 +717,12 @@ class LLMClient:
             parsed = json.loads(cleaned)
         except json.JSONDecodeError:
             parsed = LLMClient._salvage_truncated_json(cleaned)
-        if isinstance(parsed, dict):
-            for key in ("items", "check_items", "data", "results"):
-                if key in parsed and isinstance(parsed[key], list):
-                    parsed = parsed[key]
-                    break
-            else:
-                parsed = [parsed]
+
+        items = LLMClient._extract_items_list(parsed)
+        if items is not None:
+            parsed = items
+        elif isinstance(parsed, dict):
+            parsed = [parsed]
 
         if not isinstance(parsed, list):
             raise ValueError("大模型返回的 JSON 结构无法解析为检查项列表")
@@ -690,12 +764,24 @@ class LLMClient:
                 except (ValueError, TypeError):
                     pass
 
+            def _clean_opt_str(val: Any) -> Optional[str]:
+                if val is None:
+                    return None
+                s = str(val).strip()
+                if not s or s.lower() in ("null", "none", "n/a") or s in ("无", "-"):
+                    return None
+                return s
+
             normalized.append({
                 "characteristic_name": str(raw_item.get("characteristic_name", "未命名特性")),
                 "characteristic_category": cat,
+                "special_char_class": _clean_opt_str(raw_item.get("special_char_class")),
                 "specification": str(raw_item.get("specification", "")),
                 "inspection_method": str(raw_item.get("inspection_method", "待确认")),
                 "acceptance_criteria": str(raw_item.get("acceptance_criteria", "")),
+                "sample_size_frequency": _clean_opt_str(raw_item.get("sample_size_frequency")),
+                "control_method": _clean_opt_str(raw_item.get("control_method")),
+                "reaction_plan": _clean_opt_str(raw_item.get("reaction_plan")),
                 "standard_clause": str(raw_item.get("standard_clause", "")),
                 "source_page": parsed_page,
                 "source_quote": str(raw_item.get("source_quote", "")),

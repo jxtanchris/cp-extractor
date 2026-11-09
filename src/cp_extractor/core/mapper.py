@@ -3,6 +3,7 @@
 负责将校验/审核后的结构化检查项导出为符合汽车行业控制计划习惯的 Excel 清单。
 """
 
+import os
 from pathlib import Path
 from typing import Union
 import openpyxl
@@ -11,7 +12,9 @@ from ..schemas.models import ExtractionPackage
 
 
 class ControlPlanExcelMapper:
-    """控制计划 Excel 映射与导出类"""
+    """控制计划 Excel 映射与导出类（v2.0 15列 IATF 16949 标准布局）"""
+
+    DEFAULT_PUBLIC_BASE_URL = "http://127.0.0.1:8000"
 
     HEADER_FILL = PatternFill(start_color="1F497D", end_color="1F497D", fill_type="solid")
     HEADER_FONT = Font(name="微软雅黑", size=11, bold=True, color="FFFFFF")
@@ -32,6 +35,10 @@ class ControlPlanExcelMapper:
         ("判定准则", 26),
         ("标准条款号", 14),
         ("原文引用摘录", 36),
+        ("特殊特性分类", 14),
+        ("样本容量 / 频次", 18),
+        ("控制方法", 22),
+        ("反应计划", 24),
         ("置信度", 10),
         ("需人工确认", 12),
         ("备注", 20),
@@ -66,6 +73,10 @@ class ControlPlanExcelMapper:
                 item.acceptance_criteria,
                 clause_label,
                 item.source_quote,
+                item.special_char_class or "",
+                item.sample_size_frequency or "",
+                item.control_method or "",
+                item.reaction_plan or "",
                 item.confidence.value,
                 "是" if item.needs_human_review else "否",
                 item.notes or "",
@@ -93,6 +104,10 @@ class ControlPlanExcelMapper:
                 item.acceptance_criteria,
                 clause_label,
                 item.source_quote,
+                item.special_char_class or "",
+                item.sample_size_frequency or "",
+                item.control_method or "",
+                item.reaction_plan or "",
                 item.confidence.value,
                 "是" if item.needs_human_review else "否",
                 item.notes or "",
@@ -138,18 +153,35 @@ class ControlPlanExcelMapper:
             cell.border = self.BORDER_THIN
             if highlight_warning:
                 cell.fill = self.WARNING_FILL
-            if col_idx in (1, 3, 7, 9, 10):
+            if col_idx in (1, 3, 7, 9, 13, 14):
                 cell.alignment = align_center
             else:
                 cell.alignment = align_left
 
-    def _apply_clause_hyperlink(self, ws, row_idx: int, source_url: str | None, source_page: int | None):
-        """若存在源文件链接（如 PDF），将第 7 列（标准条款号）设置为带 #page=N 锚点的超链接"""
+    @classmethod
+    def resolve_full_hyperlink_url(cls, source_url: str | None, source_page: int | None) -> str | None:
+        """
+        将根相对路径（如 /api/source/xxx.pdf）补全为带完整 HTTP 协议与主机头的绝对 URL，
+        确保下载后的 Excel 在本地通过 Office/WPS 点击超链接时能直接唤起浏览器并精准翻到 #page=N 页。
+        """
         if not source_url:
+            return None
+        cleaned = source_url.strip()
+        if cleaned.startswith("/"):
+            base_origin = os.getenv("PUBLIC_BASE_URL", cls.DEFAULT_PUBLIC_BASE_URL).strip().rstrip("/")
+            resolved_url = f"{base_origin}{cleaned}"
+        else:
+            resolved_url = cleaned
+
+        page_num = source_page or 1
+        return f"{resolved_url}#page={page_num}" if resolved_url.lower().endswith(".pdf") else resolved_url
+
+    def _apply_clause_hyperlink(self, ws, row_idx: int, source_url: str | None, source_page: int | None):
+        """若存在源文件链接（如 PDF），将第 7 列（标准条款号）设置为带完整 HTTP 基地址与 #page=N 锚点的超链接"""
+        target_link = self.resolve_full_hyperlink_url(source_url, source_page)
+        if not target_link:
             return
         cell = ws.cell(row=row_idx, column=7)
-        page_num = source_page or 1
-        target_link = f"{source_url}#page={page_num}" if source_url.lower().endswith(".pdf") else source_url
         cell.hyperlink = target_link
         cell.font = Font(name="微软雅黑", size=10, color="0563C1", underline="single")
 

@@ -115,9 +115,13 @@ class LearningSettingsRequest(BaseModel):
 class LearnedRuleUpdateRequest(BaseModel):
     action: Optional[str] = Field(default=None, description="approve | reject")
     is_active: Optional[bool] = Field(default=None, description="是否立即启用该规则")
+    learned_special_char_class: Optional[str] = Field(default=None, description="自动套用的特殊特性分类")
     learned_specification: Optional[str] = Field(default=None, description="自动套用的规范/公差")
     learned_method: Optional[str] = Field(default=None, description="自动套用的检查方法")
     learned_criteria: Optional[str] = Field(default=None, description="自动套用的判定准则")
+    learned_sample_frequency: Optional[str] = Field(default=None, description="自动套用的样本容量/频次")
+    learned_control_method: Optional[str] = Field(default=None, description="自动套用的控制方法")
+    learned_reaction_plan: Optional[str] = Field(default=None, description="自动套用的反应计划")
 
 
 SAMPLE_META = {
@@ -268,6 +272,24 @@ def get_sample(sample_name: str):
     }
 
 
+def _build_chunks_routing_info(content: str, manual_category: Optional[str] = None) -> List[Dict[str, Any]]:
+    """生成文档语义分块及每块动态匹配的插件路由摘要，供前端『查看 PDF 解析原文本』弹窗展示"""
+    classifier = StandardClassifier()
+    primary_key, _ = classifier.classify(content, manual_category=manual_category)
+    chunks = StandardExtractorPipeline.split_document_into_chunks(content)
+    info_list: List[Dict[str, Any]] = []
+    for idx, ch in enumerate(chunks, start=1):
+        plugins = classifier.classify_chunk_plugins(
+            ch, default_plugin_key=primary_key, manual_category=manual_category
+        )
+        info_list.append({
+            "chunk_index": idx,
+            "char_length": len(ch),
+            "matched_plugins": plugins,
+        })
+    return info_list
+
+
 @app.post("/api/upload")
 async def upload_standard(file: UploadFile = File(...)):
     raw = await file.read()
@@ -282,9 +304,11 @@ async def upload_standard(file: UploadFile = File(...)):
     return {
         "file_name": file.filename,
         "content": content,
+        "parsed_length": len(content),
         "detected_key": key,
         "detected_category": cat_enum.value,
         "source_file_url": source_file_url,
+        "chunks_info": _build_chunks_routing_info(content),
     }
 
 
@@ -339,10 +363,11 @@ async def extract_from_uploaded_document(
 
     try:
         pipeline = StandardExtractorPipeline(llm_callable=llm_client.extract_check_items_json)
+        manual_cat = category if category != "auto" else None
         package = pipeline.run(
             file_name=file.filename or "standard.pdf",
             content=parsed_text,
-            manual_category=category if category != "auto" else None,
+            manual_category=manual_cat,
         )
         package.standard_info.source_file_url = source_file_url
         downloads = _persist_artifacts(package)
@@ -350,6 +375,8 @@ async def extract_from_uploaded_document(
             "engine_used": llm_client.display_label,
             "parsed_length": len(parsed_text),
             "parsed_preview": parsed_text[:2000],
+            "parsed_text": parsed_text,
+            "chunks_info": _build_chunks_routing_info(parsed_text, manual_category=manual_cat),
             "source_file_url": source_file_url,
             "package": package.model_dump(mode="json"),
             **downloads,
@@ -601,9 +628,13 @@ def update_learned_rule(rule_id: int, req: LearnedRuleUpdateRequest):
             rule_id=rule_id,
             action=req.action,
             is_active=req.is_active,
+            learned_special_char_class=req.learned_special_char_class,
             learned_specification=req.learned_specification,
             learned_method=req.learned_method,
             learned_criteria=req.learned_criteria,
+            learned_sample_frequency=req.learned_sample_frequency,
+            learned_control_method=req.learned_control_method,
+            learned_reaction_plan=req.learned_reaction_plan,
         )
         return {
             "updated": updated,

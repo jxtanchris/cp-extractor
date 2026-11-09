@@ -155,6 +155,7 @@ class QualityGateValidator:
         for idx, item in enumerate(all_candidate_items, start=1):
             item_tag = f"#{idx} [{item.characteristic_name}]"
             needs_review = item.needs_human_review
+            item_has_hard_error = False
 
             # 0. 自动解析并回填 PDF 页码（若原文包含 <!-- 第 X 页 --> 标记）
             if source_full_text:
@@ -164,14 +165,16 @@ class QualityGateValidator:
                 if resolved_page is not None:
                     item.source_page = resolved_page
 
-            # 1. 溯源校验：标准条款和原文引用
+            # 1. 溯源校验：标准条款和原文引用（硬门禁）
             if not item.standard_clause or item.standard_clause.strip() in ["-", "无", "N/A"]:
                 report.missing_clause_or_quote.append(f"{item_tag}: 缺少明确的标准条款号")
                 needs_review = True
+                item_has_hard_error = True
 
             if not item.source_quote or len(item.source_quote.strip()) < 2:
                 report.missing_clause_or_quote.append(f"{item_tag}: 缺少原文引用内容")
                 needs_review = True
+                item_has_hard_error = True
             elif source_full_text:
                 # 规范要求：每条检查项必须带标准条款和原文引用，抽样审核零编造
                 # 清洗换行和空格后核验是否真实存在于原文本
@@ -182,8 +185,9 @@ class QualityGateValidator:
                         f"{item_tag}: 原文引用无法在原文中完全匹配，可能存在改写或幻觉"
                     )
                     needs_review = True
+                    item_has_hard_error = True
 
-            # 2. 低置信度项门禁
+            # 2. 低置信度项门禁（软门禁）
             if item.confidence == ConfidenceLevel.LOW:
                 if not item.needs_human_review:
                     report.unmarked_low_confidence.append(
@@ -191,7 +195,7 @@ class QualityGateValidator:
                     )
                 needs_review = True
 
-            # 3. 语义混淆探测：试验方法误写为判定准则（基于 SQLite 多语言词库实时校验）
+            # 3. 语义混淆探测：试验方法误写为判定准则（硬门禁，基于 SQLite 多语言词库实时校验）
             for method_kw in method_keywords:
                 if self._contains_term(item.acceptance_criteria, method_kw) and not any(
                     self._contains_term(item.acceptance_criteria, c) for c in criteria_keywords
@@ -200,6 +204,7 @@ class QualityGateValidator:
                         f"{item_tag}: 判定准则中包含试验方法关键词 '{method_kw}' 且缺少合格判据特征"
                     )
                     needs_review = True
+                    item_has_hard_error = True
                     break
 
             # 4. 单位完整性初筛（数值存在但无单位/判定说明，基于 SQLite 物理单位与多语言判据词库实时校验）
@@ -221,15 +226,15 @@ class QualityGateValidator:
                 item.notes = item.notes or "括号标注为参考尺寸 (Reference Dimension)，请工程师确认是否剔除"
                 needs_review = True
 
-            # 6. CTQ 门禁规则 B：单边公差原样保留校验（防止将 +0.05/-0.00 篡改为 ±0.05）
+            # 6. CTQ 门禁规则 B：单边公差原样保留校验（硬门禁，防止将 +0.05/-0.00 篡改为 ±0.05）
             if self.UNILATERAL_TOL_PATTERN.search(item.source_quote) and "±" in item.specification and not self.UNILATERAL_TOL_PATTERN.search(item.specification):
                 msg = f"{item_tag}: 原文为单边公差，但提取规范被改写为对称公差 '{item.specification}'，违反 CTQ 逐字保真原则"
                 report.missing_clause_or_quote.append(msg)
                 item.notes = item.notes or "单边公差被改写为双边公差 (±)，请核对原文恢复为单边公差格式"
                 needs_review = True
+                item_has_hard_error = True
 
-            # 7. 自学习历史人工复核规则 (FeedbackRuleLearner) 自动接管：
-            # 若质量工程师已累计多次将该项手工确认准入 (approve) 或驳回 (reject) 达到设定阈值，自动执行放行或剔除
+            # 7. 自学习历史人工复核规则 (FeedbackRuleLearner) 接管（受硬门禁绝对优先与强制条款防误删保护）：
             matched_rule = None
             try:
                 matched_rule = self.feedback_learner.match_active_rule(
@@ -241,10 +246,27 @@ class QualityGateValidator:
 
             if matched_rule:
                 if matched_rule["action"] == "reject":
-                    report.suggestions.append(
-                        f"🧠 自学习规则已自动剔除「{item.characteristic_name}」（历史人工累计驳回 {matched_rule['reject_count']} 次）。"
+                    # 防误删保护：若当前项原本是待确认/低置信度/参考项，执行自动剔除；
+                    # 若新文档中该特性带有明确强制公差且为高置信度受控要求，则降级至待确认清单而非静默删除
+                    is_soft_or_advisory = (
+                        needs_review
+                        or item.confidence == ConfidenceLevel.LOW
+                        or any(k in item.specification for k in ("待", "未明确", "参考"))
                     )
-                    continue
+                    if is_soft_or_advisory:
+                        report.suggestions.append(
+                            f"🧠 自学习规则已自动剔除「{item.characteristic_name}」（历史人工累计驳回 {matched_rule['reject_count']} 次）。"
+                        )
+                        continue
+                    else:
+                        needs_review = True
+                        item.notes = (
+                            f"🧠 命中历史驳回规则（累计驳回 {matched_rule['reject_count']} 次），"
+                            f"但当前文档中该项为高置信度明确公差要求，已转入待确认清单防误删"
+                        )
+                        report.suggestions.append(
+                            f"🧠 「{item.characteristic_name}」命中历史驳回规则，但因带有明确公差，已转入待确认清单请工程师裁定。"
+                        )
                 elif matched_rule["action"] == "approve":
                     if matched_rule["learned_specification"] and (
                         "待" in item.specification or "未明确" in item.specification or "仅供参考" in item.specification
@@ -259,16 +281,32 @@ class QualityGateValidator:
                     ):
                         item.acceptance_criteria = matched_rule["learned_criteria"]
 
-                    item.confidence = ConfidenceLevel.HIGH
-                    needs_review = False
-                    item.notes = f"🧠 自学习规则已自动准入（历史人工累计确认 {matched_rule['approve_count']} 次）"
-                    # 移除因原始低置信度记录的告警
-                    report.unmarked_low_confidence = [
-                        m for m in report.unmarked_low_confidence if not m.startswith(item_tag)
-                    ]
-                    report.suggestions.append(
-                        f"🧠 自学习规则已将「{item.characteristic_name}」自动准入控制计划（历史人工确认 {matched_rule['approve_count']} 次）。"
-                    )
+                    # 回填 v2.0 IATF 16949 扩展字段
+                    if matched_rule.get("learned_special_char_class") and not item.special_char_class:
+                        item.special_char_class = matched_rule["learned_special_char_class"]
+                    if matched_rule.get("learned_sample_frequency") and not item.sample_size_frequency:
+                        item.sample_size_frequency = matched_rule["learned_sample_frequency"]
+                    if matched_rule.get("learned_control_method") and not item.control_method:
+                        item.control_method = matched_rule["learned_control_method"]
+                    if matched_rule.get("learned_reaction_plan") and not item.reaction_plan:
+                        item.reaction_plan = matched_rule["learned_reaction_plan"]
+
+                    # 硬门禁绝对优先：仅当未触发硬性错误（原文失配、单边公差篡改、方法判据混淆）时，才允许自动放行
+                    if not item_has_hard_error:
+                        item.confidence = ConfidenceLevel.HIGH
+                        needs_review = False
+                        item.notes = f"🧠 自学习规则已自动准入（历史人工累计确认 {matched_rule['approve_count']} 次）"
+                        report.unmarked_low_confidence = [
+                            m for m in report.unmarked_low_confidence if not m.startswith(item_tag)
+                        ]
+                        report.suggestions.append(
+                            f"🧠 自学习规则已将「{item.characteristic_name}」自动准入控制计划（历史人工确认 {matched_rule['approve_count']} 次）。"
+                        )
+                    else:
+                        item.notes = (
+                            f"{item.notes + '；' if item.notes else ''}"
+                            f"虽命中自学习准入规则，但触发硬性防幻觉/防篡改门禁，禁止绕过，仍需人工复核"
+                        )
 
             # 更新 items
             item.needs_human_review = needs_review
