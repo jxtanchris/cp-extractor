@@ -135,6 +135,89 @@ def test_quality_gate_validator():
     assert len(result.validation_report.method_misclassified_as_criteria) >= 1
 
 
+def test_source_quote_normalization_and_fuzzy_tolerance():
+    """测试 Phase 2：反幻觉门禁标点归一化与高阈值模糊容差机制"""
+    source_text = (
+        "# 技术要求\n\n"
+        "3.1 销轴外径：尺寸应为 Ø25.00 (+0.02/-0.01) mm，采用千分尺检测。\n"
+        "3.2 热处理淬火硬度：必须达到 45~50 HRC，按 GB/T 230.1 洛氏硬度计测试。\n"
+    )
+
+    validator = QualityGateValidator()
+
+    # 1. 验证仅存在标点差异（如冒号全半角、括号差异、省略表格符号等）但内容一致时：
+    # 标点归一化后匹配度 >= 90%，判定为合格放行，绝不产生硬错误误报
+    item_punc_diff = CheckItem(
+        characteristic_name="销轴外径",
+        characteristic_category=CharacteristicCategory.DIMENSION,
+        specification="Ø25.00 +0.02/-0.01 mm",
+        inspection_method="千分尺",
+        acceptance_criteria="Ø24.99 ~ Ø25.02 mm",
+        standard_clause="3.1",
+        # 原文为 "3.1 销轴外径：尺寸应为 Ø25.00 (+0.02/-0.01) mm，采用千分尺检测。"
+        # 模型输出带有全半角/空格/管道符细微格式差: "销轴外径: 尺寸应为 Ø25.00 (+0.02/-0.01) mm, 采用千分尺检测"
+        source_quote="销轴外径: 尺寸应为 Ø25.00 (+0.02/-0.01) mm, 采用千分尺检测",
+        confidence=ConfidenceLevel.HIGH,
+        needs_human_review=False,
+    )
+    pkg1 = ExtractionPackage(
+        standard_info=StandardInfo(file_name="test.pdf", standard_category="公差/尺寸标准"),
+        check_items=[item_punc_diff],
+    )
+    res1 = validator.validate_package(pkg1, source_full_text=source_text)
+    # 应直接通过，不触发 missing_clause_or_quote 硬错误，留在 check_items
+    assert len(res1.validation_report.missing_clause_or_quote) == 0
+    assert len(res1.check_items) == 1
+    assert res1.check_items[0].characteristic_name == "销轴外径"
+
+    # 2. 验证轻微概括改写（吻合度 75% ~ 90%）：
+    # 分流至待人工复核清单，但绝不记为硬错误（避免触发昂贵的模型二次自纠错重提）
+    item_mild_rewrite = CheckItem(
+        characteristic_name="热处理淬火硬度",
+        characteristic_category=CharacteristicCategory.PROCESS_PARAMETER,
+        specification="45~50 HRC",
+        inspection_method="洛氏硬度计",
+        acceptance_criteria="45~50 HRC",
+        standard_clause="3.2",
+        # 模型省略了部分定语: "淬火硬度达到 45~50 HRC 洛氏硬度计测试"
+        source_quote="淬火硬度达到 45~50 HRC 洛氏硬度计测试",
+        confidence=ConfidenceLevel.HIGH,
+        needs_human_review=False,
+    )
+    pkg2 = ExtractionPackage(
+        standard_info=StandardInfo(file_name="test.pdf", standard_category="工艺标准"),
+        check_items=[item_mild_rewrite],
+    )
+    res2 = validator.validate_package(pkg2, source_full_text=source_text)
+    # 不属于硬错误，不应出现在 missing_clause_or_quote 中
+    assert len(res2.validation_report.missing_clause_or_quote) == 0
+    # 但属于待人工确认软门禁
+    assert len(res2.pending_review_items) == 1
+    assert res2.pending_review_items[0].characteristic_name == "热处理淬火硬度"
+    assert any("吻合度" in s for s in res2.validation_report.suggestions)
+
+    # 3. 验证真正编造的幻觉引用（吻合度 < 75%）：
+    # 必须坚决拦截记入 missing_clause_or_quote 硬错误
+    item_fake = CheckItem(
+        characteristic_name="抗拉强度",
+        characteristic_category=CharacteristicCategory.MATERIAL,
+        specification="≥ 600 MPa",
+        inspection_method="拉伸机",
+        acceptance_criteria="≥ 600 MPa",
+        standard_clause="3.3",
+        source_quote="完全凭空捏造的虚假引用文本没有任何原文依据",
+        confidence=ConfidenceLevel.HIGH,
+        needs_human_review=False,
+    )
+    pkg3 = ExtractionPackage(
+        standard_info=StandardInfo(file_name="test.pdf", standard_category="材料标准"),
+        check_items=[item_fake],
+    )
+    res3 = validator.validate_package(pkg3, source_full_text=source_text)
+    assert len(res3.validation_report.missing_clause_or_quote) == 1
+    assert "可能存在改写或幻觉" in res3.validation_report.missing_clause_or_quote[0]
+
+
 def test_excel_export(tmp_path: Path):
     """测试 Excel 导出功能"""
     item = CheckItem(
@@ -266,6 +349,61 @@ def test_pdf_table_alignment_and_document_chunking():
         assert "Q/CP 001-2026" in ch
 
 
+def test_sticky_table_headers_and_caption_inheritance():
+    """测试 Phase 1：大表格切分或二分时表头/表题动态吸顶继承 (Sticky Table Header & Caption)"""
+    from src.cp_extractor.core.extractor import StandardExtractorPipeline
+
+    # 1. 验证 _split_text_in_half 对截断表格自动注入表头与表题 (续)
+    table_text = (
+        "### 表 1 线性尺寸极限偏差数值 (mm)\n"
+        "| 基本尺寸分段 | 精密 f | 中等 m | 粗糙 c |\n"
+        "|---|---|---|---|\n"
+        "| 0.5~3 | ±0.05 | ±0.1 | ±0.2 |\n"
+        "| >3~6 | ±0.05 | ±0.1 | ±0.3 |\n"
+        "| >6~30 | ±0.1 | ±0.2 | ±0.5 |\n"
+        "| >30~120 | ±0.15 | ±0.3 | ±0.8 |\n"
+        "| >120~400 | ±0.2 | ±0.5 | ±1.2 |\n"
+    )
+    halves = StandardExtractorPipeline._split_text_in_half(table_text)
+    assert len(halves) == 2, "应成功切分为两部分"
+    half1, half2 = halves[0], halves[1]
+
+    # half1 包含表头与前部数据行
+    assert "### 表 1 线性尺寸极限偏差数值 (mm)" in half1
+    assert "| 0.5~3 | ±0.05 |" in half1
+
+    # half2 必须自动继承吸顶表题 (续) 和列名表头，杜绝断头表格
+    assert "### 表 1 线性尺寸极限偏差数值 (mm) (续)" in half2
+    assert "| 基本尺寸分段 | 精密 f | 中等 m | 粗糙 c |" in half2
+    assert "|---|---|---|---|" in half2
+    assert "| >120~400 | ±0.2 |" in half2
+
+    # 2. 验证多页大表格在 split_document_into_chunks 中切分时自动继承表题与表头
+    multi_row_table = (
+        "# GB/T 1804-2000 一般公差\n\n"
+        "## 5. 公差数值表\n"
+        "### 表 2 倒圆半径与倒角高度极限偏差 (mm)\n"
+        "| 基本尺寸分段 | 精密 f / 中等 m | 粗糙 c / 最粗 v |\n"
+        "|---|---|---|\n"
+    )
+    for i in range(1, 35):
+        multi_row_table += f"| 分段_{i} ({i*10}~{i*10+10}) | ±{i*0.1:.1f} | ±{i*0.2:.1f} |\n"
+
+    chunks = StandardExtractorPipeline.split_document_into_chunks(multi_row_table, max_chars=600)
+    assert len(chunks) >= 2, "大表格按 600 字符限制应至少切分为 2 个分块"
+
+    # 每个含有该表后续数据行的分块，都必须拥有表题与完整表头
+    for idx, ch in enumerate(chunks):
+        if idx == 0:
+            assert "### 表 2 倒圆半径与倒角高度极限偏差 (mm)" in ch
+            assert "| 基本尺寸分段 | 精密 f / 中等 m |" in ch
+        else:
+            # 后续分块必须吸顶继承 (续) 与表头
+            assert "### 表 2 倒圆半径与倒角高度极限偏差 (mm) (续)" in ch
+            assert "| 基本尺寸分段 | 精密 f / 中等 m | 粗糙 c / 最粗 v |" in ch
+            assert "|---|---|---|" in ch
+
+
 def test_self_correction_refinement_loop():
     """测试维度2：当 LLM 首次输出存在单边公差改写或引用偏差时，自动触发二次校验修正闭环"""
     import json
@@ -312,6 +450,184 @@ def test_self_correction_refinement_loop():
     assert len(pkg.check_items) == 1
     assert len(pkg.pending_review_items) == 0
     assert pkg.check_items[0].specification == "Ø16.00 +0.05/-0.00 mm"
+
+
+def test_targeted_refinement_context_for_long_document():
+    """测试 Phase 3：长文档二次自纠错时定向局部上下文切片送修 (Targeted Local Context)"""
+    import json
+    from src.cp_extractor.core.extractor import StandardExtractorPipeline
+    from src.cp_extractor.schemas.models import CheckItem, CharacteristicCategory, ConfidenceLevel
+
+    # 构造一份包含 5 页、长达上万字的典型大型标准文档
+    page1 = "<!-- 第 1 页 -->\n# Q/CP 888-2026 传动轴总成综合标准\n" + ("1.1 总则说明及适用范围文字。\n" * 80)
+    page2 = "<!-- 第 2 页 -->\n## 2. 规范性引用文件\n" + ("2.1 引用国家标准 GB/T 1804 及 ISO 2768。\n" * 80)
+    page3 = (
+        "<!-- 第 3 页 -->\n## 3. 关键尺寸与公差\n"
+        "3.1 花键轴端部外径 D 必须控制在 Ø32.00 +0.03/-0.00 mm，使用外径千分尺检验。\n"
+        + ("3.2 普通未注倒角为 1.0 ± 0.2 mm。\n" * 80)
+    )
+    page4 = "<!-- 第 4 页 -->\n## 4. 表面防腐要求\n" + ("4.1 表面电泳涂层厚度应为 15~25 μm。\n" * 80)
+    page5 = "<!-- 第 5 页 -->\n## 5. 包装与入库规范\n" + ("5.1 包装箱需放置防潮防锈剂，堆叠不超过3层。\n" * 80)
+
+    long_multi_page_doc = f"{page1}\n\n{page2}\n\n{page3}\n\n{page4}\n\n{page5}"
+    assert len(long_multi_page_doc) > 8000, "构造的长文档应超过 8000 字符"
+
+    # 1. 直接测试 extract_targeted_refinement_context 方法
+    err_item = CheckItem(
+        characteristic_name="花键轴端部外径 D",
+        characteristic_category=CharacteristicCategory.DIMENSION,
+        specification="Ø32.00 ± 0.03 mm",  # 发生单边篡改
+        inspection_method="千分尺",
+        acceptance_criteria="Ø32.00 ~ Ø32.03 mm",
+        standard_clause="3.1",
+        source_quote="花键轴端部外径 D 必须控制在 Ø32.00 +0.03/-0.00 mm，使用外径千分尺检验。",
+        source_page=3,
+        confidence=ConfidenceLevel.HIGH,
+        needs_human_review=False,
+    )
+
+    targeted_ctx = StandardExtractorPipeline.extract_targeted_refinement_context(
+        long_multi_page_doc, [err_item]
+    )
+
+    # 验证上下文瘦身与精准定位：
+    # 1) 长度远小于全文（通常在 1000~3000 字之间，而不是 >8000 字）
+    assert len(targeted_ctx) < len(long_multi_page_doc) * 0.5
+    # 2) 必须保留文档首部标题信息
+    assert "Q/CP 888-2026" in targeted_ctx
+    # 3) 必须精准包含出错项所在第 3 页/条款 3.1 的内容
+    assert "3.1 花键轴端部外径 D" in targeted_ctx
+    # 4) 不应包含遥远且无关的第 5 页包装文字
+    assert "包装箱需放置防潮防锈剂" not in targeted_ctx
+
+    # 2. 验证端到端提取流中 llm_refiner 确实收到了瘦身后的定向上下文
+    refiner_received_src = []
+
+    def mock_extract_with_err(_prompt: str) -> str:
+        return json.dumps([
+            {
+                "standard_clause": "3.1",
+                "source_page": 3,
+                "source_quote": "花键轴端部外径 D 必须控制在 Ø32.00 +0.03/-0.00 mm，使用外径千分尺检验。",
+                "characteristic_name": "花键轴端部外径 D",
+                "characteristic_category": "尺寸",
+                "specification": "Ø32.00 ± 0.03 mm",  # 篡改单边公差触发门禁
+                "inspection_method": "千分尺",
+                "acceptance_criteria": "Ø32.00 ~ Ø32.03 mm",
+                "confidence": "高",
+                "needs_human_review": False,
+            }
+        ], ensure_ascii=False)
+
+    def mock_targeted_refiner(src: str, failed_items: list, errors: list, val_tpl: str) -> list:
+        refiner_received_src.append(src)
+        fixed = dict(failed_items[0])
+        fixed["specification"] = "Ø32.00 +0.03/-0.00 mm"
+        fixed["needs_human_review"] = False
+        return [fixed]
+
+    pipe = StandardExtractorPipeline(
+        llm_callable=mock_extract_with_err,
+        llm_refiner=mock_targeted_refiner,
+    )
+    res_pkg = pipe.run("test_long.md", long_multi_page_doc, manual_category="tolerance")
+
+    assert len(refiner_received_src) == 1
+    passed_src = refiner_received_src[0]
+    # 送修文本被精准裁剪，杜绝全文档 Token 浪费
+    assert len(passed_src) < len(long_multi_page_doc) * 0.5
+    assert "3.1 花键轴端部外径 D" in passed_src
+    assert res_pkg.check_items[0].specification == "Ø32.00 +0.03/-0.00 mm"
+
+
+def test_feedback_prompt_specification_decoupling_and_anti_pollution(tmp_path: Path):
+    """测试 Phase 4：自学习规则注入提示词时「规范数值」与「工艺量检具」解耦防污染保护"""
+    from src.cp_extractor.core.feedback_learner import FeedbackRuleLearner
+    from src.cp_extractor.core.extractor import StandardExtractorPipeline
+    from src.cp_extractor.schemas.models import CheckItem, CharacteristicCategory, ConfidenceLevel
+
+    test_db = tmp_path / "test_feedback_anti_pollute.db"
+    learner = FeedbackRuleLearner(db_path=test_db, user_id=101)
+
+    # 1. 模拟工程师对零件 A 历史学习了具体尺寸（如 10.00 +0.02/-0.00 mm）和通用量检具习惯
+    hist_item = CheckItem(
+        characteristic_name="定位销外径",
+        characteristic_category=CharacteristicCategory.DIMENSION,
+        specification="Ø10.00 +0.02/-0.00 mm",
+        inspection_method="高精度数显千分尺",
+        acceptance_criteria="Ø10.00 ~ Ø10.02 mm",
+        sample_size_frequency="5件/每班",
+        control_method="SPC控制图",
+        reaction_plan="停机隔离并通知班长",
+        standard_clause="3.1",
+        source_quote="定位销外径尺寸为 Ø10.00 +0.02/-0.00 mm",
+        confidence=ConfidenceLevel.HIGH,
+        needs_human_review=False,
+    )
+    # 手工准入达到阈值 3 次，使其升格生效
+    for _ in range(3):
+        learner.record_review_decision(
+            standard_category="tolerance",
+            original_item=hist_item,
+            action="approve",
+            updated_item=hist_item,
+        )
+
+    # 2. 验证 build_prompt_injection_block：
+    # - 必须包含防污染强约束说明
+    # - 优先继承工艺方法（千分尺、频次、控制方法、反应计划）
+    # - 绝对严禁把历史具体数值写成“规范填「Ø10.00 +0.02/-0.00 mm」”来误导模型！
+    prompt_block = learner.build_prompt_injection_block("tolerance")
+    assert "防污染" in prompt_block
+    assert "定位销外径" in prompt_block
+    assert "高精度数显千分尺" in prompt_block
+    assert "SPC控制图" in prompt_block
+    assert "规范填「Ø10.00 +0.02/-0.00 mm」" not in prompt_block
+    assert "严格以当前原文为准" in prompt_block
+
+    # 3. 验证端到端提取零件 B（新尺寸 Ø28.00 +0.05/-0.00 mm）时：
+    # 尺寸绝不被历史 Ø10.00 污染篡改，而通用工艺属性成功享受自学习红利！
+    new_doc = "## 3. 尺寸规范\n3.1 定位销外径必须保证 Ø28.00 +0.05/-0.00 mm，请严格按规范受控。"
+
+    def mock_extract_new_part(_prompt: str) -> str:
+        import json
+        # 验证提示词中带有防污染指令
+        assert "防污染" in _prompt
+        return json.dumps([
+            {
+                "standard_clause": "3.1",
+                "source_quote": "定位销外径必须保证 Ø28.00 +0.05/-0.00 mm，请严格按规范受控。",
+                "characteristic_name": "定位销外径",
+                "characteristic_category": "尺寸",
+                "specification": "Ø28.00 +0.05/-0.00 mm",  # 摘录新图纸的真实尺寸
+                "inspection_method": "待定",  # 原文未指明量检具
+                "acceptance_criteria": "Ø28.00 ~ Ø28.05 mm",
+                "confidence": "高",
+                "needs_human_review": False,
+            }
+        ], ensure_ascii=False)
+
+    from src.cp_extractor.core.prompt_builder import PromptBuilder
+    prompt_builder = PromptBuilder(user_id=101, db_path=test_db)
+    pipe = StandardExtractorPipeline(
+        llm_callable=mock_extract_new_part,
+        user_id=101,
+        prompt_builder=prompt_builder,
+    )
+    # 注入该专属 learner
+    pipe.validator.feedback_learner = learner
+
+    res = pipe.run("part_b.md", new_doc, manual_category="tolerance")
+    assert len(res.check_items) == 1
+    extracted_item = res.check_items[0]
+
+    # 规范数值保持新图纸真实值，零污染！
+    assert extracted_item.specification == "Ø28.00 +0.05/-0.00 mm"
+    # 通用量检具、频次与控制方法成功享受历史沉淀经验自动回填！
+    assert extracted_item.inspection_method == "高精度数显千分尺"
+    assert extracted_item.sample_size_frequency == "5件/每班"
+    assert extracted_item.control_method == "SPC控制图"
+    assert extracted_item.reaction_plan == "停机隔离并通知班长"
 
 
 def test_pdf_clause_page_resolution_and_excel_hyperlink(tmp_path: Path):

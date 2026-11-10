@@ -3,6 +3,7 @@
 对提取出的结构化数据执行确定性规则校验、溯源核对与质量门禁。
 """
 
+import difflib
 import re
 from typing import List, Optional
 from ..schemas.models import (
@@ -72,6 +73,136 @@ class QualityGateValidator:
 
     # 匹配 PDF 解析时注入的页码标记：<!-- 第 1 页 --> 或 <!-- 第 2 页 (OCR) -->
     PAGE_MARKER_PATTERN = re.compile(r"<!--\s*第\s*(\d+)\s*页[^>]*-->")
+
+    @classmethod
+    def _normalize_quote_text(cls, text: str) -> str:
+        """
+        对原文引用与全文进行标点/全半角/格式归一化：
+        1. 消除全部空白符（换行、空格、制表符）；
+        2. 消除 Markdown 表格管道符 `|`、粗体/斜体 `*`、标题 `#`、反引号 ```；
+        3. 统一全半角标点（冒号、逗号、句号、分号、感叹号、问号、中英文括号、引号、正负号、波浪号）；
+        4. 统一正负号与省略号表示。
+        """
+        if not text:
+            return ""
+        s = re.sub(r"\s+", "", text)
+        s = s.replace("|", "").replace("*", "").replace("#", "").replace("`", "")
+        trans = str.maketrans({
+            "：": ":",
+            "，": ",",
+            "。": ".",
+            "；": ";",
+            "！": "!",
+            "？": "?",
+            "（": "(",
+            "）": ")",
+            "【": "[",
+            "】": "]",
+            "“": "\"",
+            "”": "\"",
+            "‘": "'",
+            "’": "'",
+            "＋": "+",
+            "－": "-",
+            "～": "~",
+        })
+        s = s.translate(trans)
+        s = s.replace("+/-", "±").replace("...", "")
+        return s
+
+    @classmethod
+    def calculate_quote_match_ratio(
+        cls,
+        source_full_text: str,
+        source_quote: str,
+        standard_clause: Optional[str] = None,
+    ) -> float:
+        """
+        计算原文引用 (source_quote) 与标准文档全文 (source_full_text) 的吻合度比率 (0.0 ~ 1.0)：
+        1. 经标点/全半角/Markdown 格式归一化后，若作为纯子串包含，返回 1.0；
+        2. 剥离所有标点后的纯文字/数字子串包含，返回 1.0；
+        3. 若未完全包含，通过条款定位锚点与特征词定位候选窗口，计算字符级匹配覆盖率。
+        """
+        if not source_quote or not source_full_text:
+            return 0.0
+
+        norm_quote = cls._normalize_quote_text(source_quote)
+        norm_source = cls._normalize_quote_text(source_full_text)
+
+        if not norm_quote:
+            return 0.0
+        if norm_quote.lower() in norm_source.lower():
+            return 1.0
+
+        # 剥离所有标点与特殊符号，纯文字与数字比对
+        pure_quote = re.sub(r"[^\w\u4e00-\u9fa5]+", "", norm_quote).lower()
+        pure_source = re.sub(r"[^\w\u4e00-\u9fa5]+", "", norm_source).lower()
+        if pure_quote and pure_quote in pure_source:
+            return 1.0
+
+        q_len = len(norm_quote)
+        if q_len < 4:
+            return 1.0 if (pure_quote and pure_quote in pure_source) else 0.0
+
+        # 收集候选比对窗口
+        candidate_windows: List[str] = []
+
+        # 锚点 1：若有条款号 (如 3.1)，定位条款号周围文本
+        clause = (standard_clause or "").strip()
+        if clause and clause not in ("-", "无", "N/A"):
+            clean_clause = cls._normalize_quote_text(clause).lower()
+            idx = 0
+            while True:
+                pos = norm_source.lower().find(clean_clause, idx)
+                if pos == -1:
+                    break
+                w_start = max(0, pos - 100)
+                w_end = min(len(norm_source), pos + q_len + 300)
+                candidate_windows.append(norm_source[w_start:w_end])
+                idx = pos + len(clean_clause)
+                if len(candidate_windows) >= 3:
+                    break
+
+        # 锚点 2：从 quote 的前部、中部、后部抽取 4~6 字符的高信息量锚点
+        anchor_len = min(6, q_len)
+        anchors = [
+            norm_quote[:anchor_len],
+            norm_quote[-anchor_len:],
+            norm_quote[q_len // 2 - anchor_len // 2 : q_len // 2 + anchor_len // 2],
+        ]
+        for anch in anchors:
+            if len(anch) >= 3:
+                pos = norm_source.lower().find(anch.lower())
+                if pos != -1:
+                    w_start = max(0, pos - 50)
+                    w_end = min(len(norm_source), pos + q_len + 80)
+                    candidate_windows.append(norm_source[w_start:w_end])
+
+        # 若全文较短 (<= 3000 字)，直接把全文作为候选窗口之一
+        if len(norm_source) <= 3000:
+            candidate_windows.append(norm_source)
+
+        if not candidate_windows:
+            return 0.0
+
+        max_ratio = 0.0
+        for cand in candidate_windows:
+            matcher = difflib.SequenceMatcher(None, norm_quote.lower(), cand.lower())
+            blocks = [b for b in matcher.get_matching_blocks() if b.size > 0]
+            if not blocks:
+                continue
+            matching_chars = sum(b.size for b in blocks)
+            cand_start = blocks[0].b
+            cand_end = blocks[-1].b + blocks[-1].size
+            span_len = max(1, cand_end - cand_start)
+            # 综合计算：引用实际匹配字符数与对应原文跨度比例
+            ratio = (2.0 * matching_chars) / (q_len + span_len)
+            if ratio > max_ratio:
+                max_ratio = ratio
+                if max_ratio >= 0.95:
+                    break
+
+        return min(1.0, max_ratio)
 
     @classmethod
     def resolve_source_page(
@@ -182,11 +313,22 @@ class QualityGateValidator:
                 needs_review = True
                 item_has_hard_error = True
             elif source_full_text:
-                # 规范要求：每条检查项必须带标准条款和原文引用，抽样审核零编造
-                # 清洗换行和空格后核验是否真实存在于原文本
-                clean_quote = re.sub(r"\s+", "", item.source_quote)
-                clean_source = re.sub(r"\s+", "", source_full_text)
-                if clean_quote not in clean_source:
+                match_ratio = self.calculate_quote_match_ratio(
+                    source_full_text, item.source_quote, item.standard_clause
+                )
+                if match_ratio >= 0.90:
+                    # 吻合度 >= 90%：判定为格式/标点/分词细微差异，予以放行，不报警、不拦截
+                    pass
+                elif match_ratio >= 0.75:
+                    # 75% <= 吻合度 < 90%：判定为轻微语义改写，置入待确认清单人工复核，但不触发硬错误与自纠错
+                    report.suggestions.append(
+                        f"{item_tag}: 原文引用与标准原文存在轻微差异（吻合度 {match_ratio:.0%}），已标记人工复核"
+                    )
+                    item.notes = f"{item.notes + '；' if item.notes else ''}原文引用吻合度 {match_ratio:.0%}，请复核原文准确度"
+                    needs_review = True
+                    item_has_hard_error = False
+                else:
+                    # 吻合度 < 75%：判定为严重改写或幻觉编造，记入硬错误并触发定向送修
                     report.missing_clause_or_quote.append(
                         f"{item_tag}: 原文引用无法在原文中完全匹配，可能存在改写或幻觉"
                     )
@@ -370,9 +512,20 @@ class QualityGateValidator:
             if len(clean_quote) < 2:
                 report.missing_clause_or_quote.append(f"{tag}: 缺少原文引用内容")
                 needs_review = True
-            elif clean_source and clean_quote not in clean_source:
-                report.missing_clause_or_quote.append(f"{tag}: 原文引用无法在原文中完全匹配，可能存在改写或幻觉")
-                needs_review = True
+            elif source_full_text:
+                match_ratio = self.calculate_quote_match_ratio(
+                    source_full_text, item.source_quote, first_clause
+                )
+                if match_ratio >= 0.90:
+                    pass
+                elif match_ratio >= 0.75:
+                    report.suggestions.append(
+                        f"{tag}: 原文引用与标准原文存在轻微差异（吻合度 {match_ratio:.0%}），已标记人工复核"
+                    )
+                    needs_review = True
+                else:
+                    report.missing_clause_or_quote.append(f"{tag}: 原文引用无法在原文中完全匹配，可能存在改写或幻觉")
+                    needs_review = True
 
             clean_orig = self._strip_ws(item.original_name)
             if clean_quote and clean_orig and clean_orig.lower() not in clean_quote.lower():

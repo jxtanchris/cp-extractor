@@ -6,7 +6,7 @@
 import json
 import re
 from pathlib import Path
-from typing import Callable, List, Optional, Union
+from typing import Callable, List, Optional, Tuple, Union
 
 from ..schemas.models import (
     CharacteristicCategory,
@@ -28,6 +28,165 @@ class StandardExtractorPipeline:
 
     # 长文档按章节/条款自动分块的阈值（字符数），避免单次输出超长导致漏提或合并
     DEFAULT_CHUNK_CHAR_LIMIT = 2200
+
+    TABLE_ROW_RE = re.compile(r"^\s*\|.*\|\s*$")
+    TABLE_SEP_RE = re.compile(r"^\s*\|(?:\s*:?-+:?\s*\|)+\s*$")
+    TABLE_CAPTION_RE = re.compile(r"^\s*(?:#{1,6}\s+|(?:\*\*|\b)(?:表|Table)\s*[\w\.\-]+|表\s*[\w\.\-]+)")
+    PAGE_MARKER_RE = re.compile(r"<!--\s*第\s*(\d+)\s*页[^>]*-->")
+
+    @classmethod
+    def _find_active_table_context(cls, text: str) -> Optional[Tuple[Optional[str], str, str]]:
+        """
+        向前扫描文本，提取当前正处于活动状态的 Markdown 表格的 (表题, 列头行, 分隔行)。
+        若文本末尾并非处于未闭合的表格中，返回 None。
+        """
+        lines = [line.strip() for line in text.splitlines()]
+        while lines and not lines[-1]:
+            lines.pop()
+        if not lines:
+            return None
+
+        # 检查末尾行是否属于表格行
+        if not cls.TABLE_ROW_RE.match(lines[-1]):
+            return None
+
+        # 从末尾向上寻找 separator row (|---|---|)
+        sep_idx = None
+        for i in range(len(lines) - 1, -1, -1):
+            line = lines[i]
+            if not cls.TABLE_ROW_RE.match(line):
+                # 遇到了非表格行，停止搜索
+                break
+            if cls.TABLE_SEP_RE.match(line):
+                sep_idx = i
+                break
+
+        if sep_idx is None or sep_idx < 1:
+            return None
+
+        sep_line = lines[sep_idx]
+        hdr_line = lines[sep_idx - 1]
+        if not cls.TABLE_ROW_RE.match(hdr_line):
+            return None
+
+        # 向上寻找该表的表题（caption）
+        caption = None
+        for j in range(sep_idx - 2, -1, -1):
+            cline = lines[j]
+            if not cline:
+                continue
+            if cls.TABLE_CAPTION_RE.match(cline):
+                caption = cline
+                break
+            # 若遇到了其它表格行或段落，停止向上找
+            if cls.TABLE_ROW_RE.match(cline):
+                break
+            if cline.startswith("#"):
+                caption = cline
+                break
+
+        return (caption, hdr_line, sep_line)
+
+    @classmethod
+    def _is_table_continuation(cls, text: str) -> bool:
+        """
+        判断文本起始部分是否属于被截断的表格数据行（即缺少自身表头和分隔行的残缺表格）。
+        """
+        lines = text.splitlines()
+        content_lines: List[str] = []
+        for line in lines:
+            stripped = line.strip()
+            if not stripped or cls.PAGE_MARKER_RE.match(stripped):
+                continue
+            content_lines.append(stripped)
+            if len(content_lines) >= 2:
+                break
+
+        if not content_lines:
+            return False
+
+        first = content_lines[0]
+        if not cls.TABLE_ROW_RE.match(first):
+            return False
+
+        # 如果第一行本身就是分隔行，或者第二行是分隔行，说明自身已有表头
+        if cls.TABLE_SEP_RE.match(first):
+            return False
+        if len(content_lines) >= 2 and cls.TABLE_SEP_RE.match(content_lines[1]):
+            return False
+
+        return True
+
+    @classmethod
+    def _inject_sticky_table_headers(cls, prefix_text: str, next_text: str) -> str:
+        """
+        若 next_text 是断头表格行，从 prefix_text 提取活动表格上下文并注入吸顶表题 (续) 与列头。
+        """
+        if not cls._is_table_continuation(next_text):
+            return next_text
+
+        ctx = cls._find_active_table_context(prefix_text)
+        if not ctx:
+            return next_text
+
+        caption, hdr_line, sep_line = ctx
+        sticky_parts: List[str] = []
+        if caption:
+            clean_cap = caption.strip()
+            if not any(clean_cap.endswith(suffix) for suffix in ("(续)", "（续）", "(续表)", "（续表）")):
+                clean_cap += " (续)"
+            sticky_parts.append(clean_cap)
+        sticky_parts.append(hdr_line)
+        sticky_parts.append(sep_line)
+        sticky_block = "\n".join(sticky_parts)
+
+        # 找到 next_text 中第一个有效表格行前的位置插入（保留前面的 page marker）
+        lines = next_text.splitlines()
+        insert_idx = 0
+        for i, line in enumerate(lines):
+            stripped = line.strip()
+            if not stripped or cls.PAGE_MARKER_RE.match(stripped):
+                continue
+            if cls.TABLE_ROW_RE.match(stripped):
+                insert_idx = i
+                break
+
+        result_lines = lines[:insert_idx] + [sticky_block] + lines[insert_idx:]
+        return "\n".join(result_lines)
+
+    @classmethod
+    def _subdivide_oversized_section(cls, sec: str, max_chars: int) -> List[str]:
+        """
+        当单个章节（如包含几十甚至上百行的大公差矩阵表）字符数超过 max_chars 时，
+        按行安全切分并为后续切片继承吸顶表头与表题 (续)。
+        """
+        if len(sec) <= max_chars:
+            return [sec]
+
+        lines = sec.splitlines()
+        sub_chunks: List[str] = []
+        cur_lines: List[str] = []
+        cur_len = 0
+
+        for line in lines:
+            line_len = len(line) + 1
+            if cur_lines and (cur_len + line_len > max_chars):
+                sub_chunks.append("\n".join(cur_lines).strip())
+                cur_lines = [line]
+                cur_len = line_len
+            else:
+                cur_lines.append(line)
+                cur_len += line_len
+
+        if cur_lines:
+            sub_chunks.append("\n".join(cur_lines).strip())
+
+        refined: List[str] = []
+        for idx, sc in enumerate(sub_chunks):
+            if idx > 0 and refined:
+                sc = cls._inject_sticky_table_headers(refined[-1], sc)
+            refined.append(sc)
+        return refined
 
     def __init__(
         self,
@@ -80,9 +239,17 @@ class StandardExtractorPipeline:
 
         # 优先按 Markdown 二级/三级标题或顶层章节号切分段落块
         raw_sections = re.split(r"(?m)(?=^(?:##+\s+|\d+\.\d+\b))", body)
-        sections = [s.strip() for s in raw_sections if s.strip()]
-        if len(sections) <= 1:
-            sections = [p.strip() for p in re.split(r"\n{2,}", body) if p.strip()]
+        raw_sections = [s.strip() for s in raw_sections if s.strip()]
+        if len(raw_sections) <= 1:
+            raw_sections = [p.strip() for p in re.split(r"\n{2,}", body) if p.strip()]
+
+        # 若单节字符超限（例如包含巨型表格），细分并吸顶继承表头
+        sections: List[str] = []
+        for s in raw_sections:
+            if len(s) > max_chars:
+                sections.extend(StandardExtractorPipeline._subdivide_oversized_section(s, max_chars))
+            else:
+                sections.append(s)
 
         page_marker_re = re.compile(r"<!--\s*第\s*(\d+)\s*页[^>]*-->")
         chunks: List[str] = []
@@ -98,7 +265,8 @@ class StandardExtractorPipeline:
 
         for sec in sections:
             sec_len = len(sec)
-            if current_parts and (current_len + sec_len + 2 > max_chars):
+            # 避免将孤立的短标题行（如 "## 5. 公差数值表"）单独切分成无内容的空分块
+            if current_parts and (current_len + sec_len + 2 > max_chars) and current_len >= 80:
                 chunk_body = "\n\n".join(current_parts)
                 chunks.append(f"{doc_header}\n\n{chunk_body}".strip() if doc_header else chunk_body)
                 # 更新截止当前块末尾的最新页码，若下一块开头没有页码标记则自动承接
@@ -107,7 +275,9 @@ class StandardExtractorPipeline:
                     last_page_num = found_pages[-1]
                 if last_page_num and not page_marker_re.search(sec[:60]):
                     sec = f"<!-- 第 {last_page_num} 页 -->\n{sec}"
-                    sec_len = len(sec)
+                if chunks:
+                    sec = StandardExtractorPipeline._inject_sticky_table_headers(chunks[-1], sec)
+                sec_len = len(sec)
                 current_parts = [sec]
                 current_len = sec_len
             else:
@@ -119,6 +289,97 @@ class StandardExtractorPipeline:
             chunks.append(f"{doc_header}\n\n{chunk_body}".strip() if doc_header else chunk_body)
 
         return chunks if chunks else [stripped]
+
+    @classmethod
+    def extract_targeted_refinement_context(
+        cls,
+        full_content: str,
+        failed_items: List[CheckItem],
+        max_chars: int = 4000,
+    ) -> str:
+        """
+        为门禁拦截的待送修项 (failed_items) 从标准全文中精准提取定向局部上下文切片：
+        1. 若文档总体较短 (<= max_chars)，直接返回全文；
+        2. 若为长文档，提取文档首部标题信息作为全局背景；
+        3. 优先根据各错误项所在的 PDF 页码 (source_page) 定位并切取对应页码切片；
+        4. 若无页码，根据条款号 (standard_clause) 或原文引用锚点定位切取所在章节；
+        5. 合并相邻/重叠切片，控制在紧凑上下文窗口内，杜绝长文档全量送修导致的 Token 浪费与模型注意力涣散。
+        """
+        stripped = full_content.strip()
+        if len(stripped) <= max_chars:
+            return stripped
+
+        # 1. 提取文档首部标题区
+        header_match = re.search(r"(?m)^(?:##+\s+|\d+\.\s+\S|\d+\.\d+\s+)", stripped)
+        doc_header = ""
+        if header_match and 0 < header_match.start() <= 400:
+            doc_header = stripped[: header_match.start()].strip()
+
+        # 2. 检查是否有 <!-- 第 X 页 --> 分页标记
+        page_markers = list(cls.PAGE_MARKER_RE.finditer(stripped))
+        slices: List[str] = []
+
+        if page_markers:
+            # 建立页码字典: page_num -> text
+            page_map: dict[int, str] = {}
+            for i, m in enumerate(page_markers):
+                p_num = int(m.group(1))
+                p_start = m.start()
+                p_end = page_markers[i + 1].start() if i + 1 < len(page_markers) else len(stripped)
+                page_map[p_num] = stripped[p_start:p_end].strip()
+
+            target_pages = set()
+            for it in failed_items:
+                if it.source_page is not None and it.source_page in page_map:
+                    target_pages.add(it.source_page)
+
+            # 若某项没有 source_page，尝试通过条款或引用在各页中定位
+            for it in failed_items:
+                if it.source_page is None or it.source_page not in page_map:
+                    for p_num, p_txt in page_map.items():
+                        clause = (it.standard_clause or "").strip()
+                        if clause and re.search(rf"(?m)^\s*{re.escape(clause)}\b", p_txt):
+                            target_pages.add(p_num)
+                            break
+                        clean_q = re.sub(r"\s+", "", it.source_quote or "")[:15]
+                        if len(clean_q) >= 4 and clean_q in re.sub(r"\s+", "", p_txt):
+                            target_pages.add(p_num)
+                            break
+
+            for p_num in sorted(target_pages):
+                slices.append(page_map[p_num])
+
+        # 3. 若未通过页码切片（或无分页标记），退而使用章节/条款定位
+        if not slices:
+            raw_sections = re.split(r"(?m)(?=^(?:##+\s+|\d+\.\d+\b))", stripped)
+            sec_matches = []
+            for sec in raw_sections:
+                sec_clean = sec.strip()
+                if not sec_clean:
+                    continue
+                for it in failed_items:
+                    clause = (it.standard_clause or "").strip()
+                    if clause and re.search(rf"(?m)^\s*{re.escape(clause)}\b", sec_clean):
+                        sec_matches.append(sec_clean)
+                        break
+                    clean_q = re.sub(r"\s+", "", it.source_quote or "")[:15]
+                    if len(clean_q) >= 4 and clean_q in re.sub(r"\s+", "", sec_clean):
+                        sec_matches.append(sec_clean)
+                        break
+            slices = sec_matches
+
+        # 4. 若依然未能定位（极端假冒条款/幻觉），取文档前 max_chars 字符作为兜底
+        if not slices:
+            slices = [stripped[:max_chars]]
+
+        # 5. 组合 doc_header 与各个切片
+        combined_body = "\n\n... (中间其他章节省略) ...\n\n".join(slices)
+        if doc_header and doc_header not in combined_body:
+            final_context = f"{doc_header}\n\n... (前部省略) ...\n\n{combined_body}"
+        else:
+            final_context = combined_body
+
+        return final_context.strip()
 
     @staticmethod
     def _deduplicate_items(items: List[CheckItem]) -> List[CheckItem]:
@@ -140,15 +401,20 @@ class StandardExtractorPipeline:
     MIN_SPLIT_CHARS = 400
     MAX_SPLIT_DEPTH = 3
 
-    @staticmethod
-    def _split_text_in_half(text: str) -> List[str]:
-        """按最靠近中点的换行把文本一分为二（尽量不切断表格行）"""
+    @classmethod
+    def _split_text_in_half(cls, text: str) -> List[str]:
+        """按最靠近中点的换行把文本一分为二（尽量不切断表格行，且自动继承表头吸顶）"""
         mid = len(text) // 2
         left = text.rfind("\n", 0, mid)
         right = text.find("\n", mid)
         candidates = [p for p in (left, right) if p > 0]
         cut = min(candidates, key=lambda p: abs(p - mid)) if candidates else mid
-        return [part for part in (text[:cut].strip(), text[cut:].strip()) if part]
+        part1 = text[:cut].strip()
+        part2 = text[cut:].strip()
+        if not part1 or not part2:
+            return [p for p in (part1, part2) if p]
+        part2 = cls._inject_sticky_table_headers(part1, part2)
+        return [part1, part2]
 
     def _extract_chunk_adaptive(
         self,
@@ -260,8 +526,11 @@ class StandardExtractorPipeline:
                     failed_dicts = [
                         item.model_dump(mode="json") for item in hard_failed_items
                     ]
+                    targeted_context = self.extract_targeted_refinement_context(
+                        content, hard_failed_items
+                    )
                     refined_dicts = self.llm_refiner(
-                        content, failed_dicts, hard_errors, val_instruction
+                        targeted_context, failed_dicts, hard_errors, val_instruction
                     )
                     refined_items = [CheckItem.model_validate(d) for d in refined_dicts]
 

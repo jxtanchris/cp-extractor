@@ -285,7 +285,8 @@ class PromptBuilder:
                 plugin_body,
             ])
             try:
-                learned_block = FeedbackRuleLearner(user_id=self.user_id).build_prompt_injection_block(pk)
+                learner_db = self.db_path if self.db_path != DEFAULT_APP_DB_PATH else None
+                learned_block = FeedbackRuleLearner(db_path=learner_db, user_id=self.user_id).build_prompt_injection_block(pk)
                 if learned_block:
                     prompt_parts.extend(["", learned_block])
             except Exception:

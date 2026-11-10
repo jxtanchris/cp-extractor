@@ -503,20 +503,23 @@ class FeedbackRuleLearner:
     def build_prompt_injection_block(self, plugin_key: str) -> str:
         """
         将当前类别下已生效的自学习规则转化为提示词指令块，由 PromptBuilder 自动追加至提取提示词中。
+        【防数值污染机制】：
+        - 特性名称、量检具方法、抽样频次、控制方法与反应计划等通用工艺规范优先推荐采纳；
+        - 【规范与公差数值】强约束必须 100% 严格摘录当前被提取文档的实际原文，严禁跨零件/跨标准套用历史尺寸数值！
         """
         active_rules = self.list_rules(plugin_key=plugin_key, only_active=True)
         if not active_rules:
             return ""
 
         lines = [
-            "--- 🧠 系统自学习历史人工复核规则（由质量工程师多次手工确认生成，必须优先遵循） ---"
+            "--- 🧠 系统自学习历史人工复核规则（由质量工程师多次手工确认生成，必须优先遵循） ---",
+            "【规范数值防污染约束】：以下规则中，特性名称、特殊分类、量检具方法、抽样频次、控制方法与反应计划属于通用工艺知识，请优先遵循；但其【规范与公差数值】必须严格以当前原文为准，严禁跨零件套用历史数值！",
         ]
         for idx, r in enumerate(active_rules, start=1):
             name = r["characteristic_name"]
             if r["action"] == "approve":
                 method_hint = f"，检查方法填「{r['learned_method']}」" if r["learned_method"] else ""
-                criteria_hint = f"，判定准则填「{r['learned_criteria']}」" if r["learned_criteria"] else ""
-                spec_hint = f"，规范填「{r['learned_specification']}」" if r["learned_specification"] else ""
+                criteria_hint = f"，判定准则参考「{r['learned_criteria']}」" if r["learned_criteria"] else ""
                 cls_hint = f"，特殊特性分类填「{r['learned_special_char_class']}」" if r.get("learned_special_char_class") else ""
                 freq_hint = f"，抽样容量与频次填「{r['learned_sample_frequency']}」" if r.get("learned_sample_frequency") else ""
                 ctrl_hint = f"，控制方法填「{r['learned_control_method']}」" if r.get("learned_control_method") else ""
@@ -524,7 +527,8 @@ class FeedbackRuleLearner:
                 lines.append(
                     f"{idx}. 【已学习自动准入项：{name}】遇到涉及「{name}」的条款时（即使原文带有参考/建议表述），"
                     f"质量工程师已确认必须纳入控制计划：请将其提取为正式检查项，强制设置 `\"confidence\": \"高\"`、"
-                    f"`\"needs_human_review\": false`{cls_hint}{spec_hint}{method_hint}{criteria_hint}{freq_hint}{ctrl_hint}{react_hint}。"
+                    f"`\"needs_human_review\": false`{cls_hint}（公差数值严格以当前原文为准，严禁套用历史数值）"
+                    f"{method_hint}{criteria_hint}{freq_hint}{ctrl_hint}{react_hint}。"
                 )
             else:
                 lines.append(
