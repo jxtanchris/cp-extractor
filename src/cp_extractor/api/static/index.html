@@ -1134,11 +1134,11 @@
     <!-- 登录表单 -->
     <div id="authLoginForm" class="auth-form">
       <div class="field" style="margin-bottom:12px;">
-        <label>用户名 (Username)</label>
+        <label>用户名</label>
         <input type="text" id="authLoginUsername" class="form-control" placeholder="请输入用户名" onkeydown="if(event.key==='Enter') doLogin()" />
       </div>
       <div class="field" style="margin-bottom:18px;">
-        <label>密码 (Password)</label>
+        <label>密码</label>
         <input type="password" id="authLoginPassword" class="form-control" placeholder="请输入登录密码" onkeydown="if(event.key==='Enter') doLogin()" />
       </div>
       <button type="button" class="btn-primary" id="loginSubmitBtn" onclick="doLogin()">立即登录</button>
@@ -1147,12 +1147,12 @@
     <!-- 注册表单 -->
     <div id="authRegForm" class="auth-form" style="display:none;">
       <div class="field" style="margin-bottom:12px;">
-        <label>用户名 (登录账号)</label>
+        <label>用户名</label>
         <input type="text" id="authRegUsername" class="form-control" placeholder="英文字母、数字或下划线" onkeydown="if(event.key==='Enter') doRegister()" />
       </div>
       <div class="field" style="margin-bottom:12px;">
-        <label>姓名 / 部门 (选填)</label>
-        <input type="text" id="authRegDisplayName" class="form-control" placeholder="例如：张工 (质量部)" onkeydown="if(event.key==='Enter') doRegister()" />
+        <label>姓名 (选填)</label>
+        <input type="text" id="authRegDisplayName" class="form-control" placeholder="例如：张工" onkeydown="if(event.key==='Enter') doRegister()" />
       </div>
       <div class="field" style="margin-bottom:16px;">
         <label>设置密码</label>
@@ -1234,8 +1234,8 @@
           <thead>
             <tr>
               <th style="width:50px;">UID</th>
-              <th style="width:130px;">用户名 (账号)</th>
-              <th style="width:140px;">工程师姓名/部门</th>
+              <th style="width:130px;">用户名</th>
+              <th style="width:140px;">姓名</th>
               <th style="width:110px;">系统角色</th>
               <th style="width:110px;">历史解析数</th>
               <th style="width:150px;">注册时间</th>
@@ -1759,7 +1759,7 @@
       if (dropdownUserRole) {
         dropdownUserRole.textContent = currentUser.is_admin
           ? '系统管理员 (具备服务端配置与全局审计特权)'
-          : '质量工程技术人员 (个人沙箱隔离)';
+          : '质量工程师 (个人沙箱隔离)';
       }
       if (authBtn) authBtn.style.display = 'none';
       if (changePwdBtn) changePwdBtn.style.display = 'flex';

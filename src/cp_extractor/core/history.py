@@ -4,13 +4,14 @@
 """
 
 import json
+import os
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 ROOT_DIR = Path(__file__).resolve().parent.parent.parent.parent
-DEFAULT_DB_PATH = ROOT_DIR / "data" / "app.db"
+DEFAULT_DB_PATH = Path(os.getenv("CP_APP_DB_PATH", ROOT_DIR / "data" / "app.db"))
 OUTPUT_DIR = ROOT_DIR / "output"
 
 

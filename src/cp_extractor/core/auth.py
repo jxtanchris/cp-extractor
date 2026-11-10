@@ -18,7 +18,7 @@ from typing import Any, Dict, List, Optional
 from ..schemas.auth import UserResponse
 
 ROOT_DIR = Path(__file__).resolve().parent.parent.parent.parent
-DEFAULT_APP_DB_PATH = ROOT_DIR / "data" / "app.db"
+DEFAULT_APP_DB_PATH = Path(os.getenv("CP_APP_DB_PATH", ROOT_DIR / "data" / "app.db"))
 DEFAULT_SECRET_KEY = os.getenv("AUTH_SECRET_KEY", "cp-extractor-insecure-default-secret-key-2026")
 JWT_ALGORITHM = "HS256"
 
