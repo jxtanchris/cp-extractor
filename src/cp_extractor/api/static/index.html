@@ -691,6 +691,9 @@
       <button id="authBtn" class="btn-top" style="background:#2563eb; border-color:#60a5fa; font-weight:600;" onclick="openAuthModal()">🔑 登录 / 注册</button>
       <button id="logoutBtn" class="btn-top" style="display:none; background:rgba(239,68,68,0.25); border-color:rgba(239,68,68,0.4);" onclick="handleLogout()">🚪 退出</button>
     </div>
+    <button class="btn-top" onclick="openHistoryModal()" style="background:#f0fdf4; color:#15803d; border-color:#bbf7d0; font-weight:600;">
+      📁 历史记录 (<span id="topHistoryCount">0</span>)
+    </button>
     <button class="btn-top" id="topParsedTextBtn" style="background:#eff6ff; color:var(--primary); border-color:#bfdbfe; font-weight:600;" onclick="openParsedTextModal()">
       👁️ 查看 PDF/文档解析原文本
     </button>
@@ -949,6 +952,60 @@
         <input type="password" id="authRegPassword" class="form-control" placeholder="至少 4 位字符" onkeydown="if(event.key==='Enter') doRegister()" />
       </div>
       <button type="button" class="btn-primary" id="regSubmitBtn" onclick="doRegister()">注册并自动登录</button>
+    </div>
+  </div>
+</div>
+
+<!-- 解析历史记录管理模态框 -->
+<div class="modal-backdrop" id="historyModal" style="display:none; z-index:9990;">
+  <div class="modal modal-lg" style="width:980px; max-width:96vw;">
+    <div class="prompt-modal-header">
+      <div>
+        <h3 style="margin:0; font-size:16px;">📁 个人专属标准解析历史记录</h3>
+        <div style="font-size:12px; color:var(--muted); margin-top:2px;">
+          严格基于多租户沙箱物理隔离，仅呈现您的专属历史记录。支持一键将历史结构化结果调回工作台继续复核或快速下载 Excel。
+        </div>
+      </div>
+      <button class="btn-sm" style="background:#e2e8f0; color:#334155;" onclick="closeHistoryModal()">✖ 关闭</button>
+    </div>
+
+    <div style="padding:14px 18px; display:flex; flex-direction:column; gap:10px; flex:1; overflow:hidden;">
+      <div style="display:flex; justify-content:space-between; align-items:center; background:#f8fafc; border:1px solid var(--border); padding:8px 12px; border-radius:6px; font-size:12.5px;">
+        <span>共找到 <b id="historyTotalCount" style="color:var(--primary);">0</b> 条专属提取记录</span>
+        <div style="display:flex; gap:8px;">
+          <input type="text" id="historySearchInput" class="form-control" style="width:200px; font-size:12px; padding:4px 8px;" placeholder="🔍 搜索文件名或类别..." oninput="filterHistoryTable()" />
+          <button type="button" class="btn-sm" style="background:#eff6ff; color:var(--primary); border:1px solid #bfdbfe; font-weight:600;" onclick="loadHistoryRecords()">🔄 刷新列表</button>
+        </div>
+      </div>
+
+      <div class="table-wrap" style="flex:1; overflow:auto; max-height:480px;">
+        <table>
+          <thead>
+            <tr>
+              <th style="width:45px;">#</th>
+              <th>标准文件名称</th>
+              <th style="width:120px;">标准类别</th>
+              <th style="width:90px;">模式</th>
+              <th style="width:150px;">使用模型/引擎</th>
+              <th style="width:115px;">条目统计</th>
+              <th style="width:145px;">提取时间</th>
+              <th style="width:185px;">操作</th>
+            </tr>
+          </thead>
+          <tbody id="historyTableBody">
+            <tr>
+              <td colspan="8" style="text-align:center; padding:40px; color:var(--muted);">加载中...</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="prompt-modal-footer">
+      <span id="historyActionStatus" style="font-size:12.5px; font-weight:600; color:var(--success);"></span>
+      <button type="button" class="btn-primary" style="width:auto; padding:7px 20px; font-size:13.5px;" onclick="closeHistoryModal()">
+        关闭
+      </button>
     </div>
   </div>
 </div>
@@ -1454,6 +1511,7 @@
       closeAuthModal();
       refreshLearningBadge();
       loadTemplateList();
+      refreshHistoryCount();
     } catch (e) {
       showAuthError('网络或服务异常: ' + e);
     } finally {
@@ -1496,6 +1554,7 @@
       closeAuthModal();
       refreshLearningBadge();
       loadTemplateList();
+      refreshHistoryCount();
       alert(`注册成功！欢迎您，${currentUser.display_name || currentUser.username}`);
     } catch (e) {
       showAuthError('网络或服务异常: ' + e);
@@ -1519,6 +1578,8 @@
     updateAuthUI();
     loadTemplateList();
     refreshLearningBadge();
+    const topCount = document.getElementById('topHistoryCount');
+    if (topCount) topCount.textContent = '0';
   }
 
   async function checkAuthSession() {
@@ -1546,6 +1607,164 @@
       }
     }
     updateAuthUI();
+    refreshHistoryCount();
+  }
+
+  // ================= 个人专属标准解析历史记录管理 =================
+  let allHistoryRecords = [];
+
+  function openHistoryModal() {
+    if (!currentUser || !authToken) {
+      openAuthModal();
+      showAuthError('查看历史记录前请先登录！');
+      return;
+    }
+    document.getElementById('historyModal').style.display = 'flex';
+    document.getElementById('historyActionStatus').textContent = '';
+    loadHistoryRecords();
+  }
+
+  function closeHistoryModal() {
+    document.getElementById('historyModal').style.display = 'none';
+  }
+
+  async function refreshHistoryCount() {
+    if (!authToken) {
+      const topCount = document.getElementById('topHistoryCount');
+      if (topCount) topCount.textContent = '0';
+      return;
+    }
+    try {
+      const resp = await fetchWithAuth('/api/history?limit=1');
+      if (resp.ok) {
+        const data = await resp.json();
+        const topCount = document.getElementById('topHistoryCount');
+        if (topCount) topCount.textContent = data.total || 0;
+      }
+    } catch (e) {}
+  }
+
+  async function loadHistoryRecords() {
+    const tbody = document.getElementById('historyTableBody');
+    tbody.innerHTML = '<tr><td colspan="8" style="text-align:center; padding:30px; color:var(--muted);">正在加载您的专属解析历史...</td></tr>';
+    try {
+      const resp = await fetchWithAuth('/api/history?limit=100');
+      if (!resp.ok) {
+        tbody.innerHTML = '<tr><td colspan="8" style="text-align:center; padding:30px; color:var(--danger);">加载历史记录失败</td></tr>';
+        return;
+      }
+      const data = await resp.json();
+      allHistoryRecords = data.records || [];
+      document.getElementById('historyTotalCount').textContent = data.total || 0;
+      const topCount = document.getElementById('topHistoryCount');
+      if (topCount) topCount.textContent = data.total || 0;
+      renderHistoryTable(allHistoryRecords);
+    } catch (e) {
+      tbody.innerHTML = `<tr><td colspan="8" style="text-align:center; padding:30px; color:var(--danger);">网络或服务异常: ${e}</td></tr>`;
+    }
+  }
+
+  function renderHistoryTable(records) {
+    const tbody = document.getElementById('historyTableBody');
+    if (!records || records.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="8" style="text-align:center; padding:45px 20px; color:var(--muted);">暂无历史提取记录。当您在左侧上传标准并提取后，系统将自动安全归档于此。</td></tr>';
+      return;
+    }
+    tbody.innerHTML = records.map((r, idx) => {
+      const timeStr = r.created_at ? r.created_at.replace('T', ' ').slice(0, 19) : '-';
+      const authedExcel = appendTokenToUrl(r.excel_url);
+      const isCharList = r.mode === 'char_list';
+      return `
+        <tr>
+          <td>${idx + 1}</td>
+          <td style="font-weight:600; color:#0f172a;">${escapeHtml(r.file_name)}</td>
+          <td><span class="badge badge-cat">${escapeHtml(r.standard_category || '通用标准')}</span></td>
+          <td><span class="badge ${isCharList ? 'badge-low' : 'badge-high'}">${isCharList ? '特性清单' : '完整计划'}</span></td>
+          <td style="font-size:12px; color:var(--muted);">${escapeHtml(r.engine_used || '-')}</td>
+          <td>
+            <span class="badge badge-high" title="正式检查项">${r.valid_count} 正式</span>
+            ${r.pending_count > 0 ? `<span class="badge badge-med" style="margin-left:3px;" title="待人工确认项">${r.pending_count} 待审</span>` : ''}
+          </td>
+          <td style="font-size:11.5px; color:var(--muted); font-family:monospace;">${timeStr}</td>
+          <td>
+            <div style="display:flex; align-items:center; gap:6px;">
+              <button type="button" class="btn-sm" style="background:#eff6ff; color:var(--primary); border:1px solid #bfdbfe; font-weight:600; padding:2px 8px; font-size:11.5px;" onclick="reloadHistoryToWorkspace(${r.id})">
+                👁️ 载入
+              </button>
+              <a href="${authedExcel}" download class="btn-sm" style="background:#f0fdf4; color:#15803d; border:1px solid #bbf7d0; text-decoration:none; padding:2px 8px; font-size:11.5px; display:inline-flex; align-items:center;">
+                📥 Excel
+              </a>
+              <button type="button" class="lex-icon-btn del" title="删除记录" onclick="deleteHistoryItem(${r.id}, '${escapeHtml(r.file_name)}')">
+                🗑️
+              </button>
+            </div>
+          </td>
+        </tr>
+      `;
+    }).join('');
+  }
+
+  function filterHistoryTable() {
+    const q = (document.getElementById('historySearchInput').value || '').trim().toLowerCase();
+    if (!q) {
+      renderHistoryTable(allHistoryRecords);
+      return;
+    }
+    const filtered = allHistoryRecords.filter(r =>
+      (r.file_name && r.file_name.toLowerCase().includes(q)) ||
+      (r.standard_category && r.standard_category.toLowerCase().includes(q)) ||
+      (r.engine_used && r.engine_used.toLowerCase().includes(q))
+    );
+    renderHistoryTable(filtered);
+  }
+
+  async function reloadHistoryToWorkspace(recordId) {
+    const statusEl = document.getElementById('historyActionStatus');
+    statusEl.style.color = 'var(--muted)';
+    statusEl.textContent = '⏳ 正在调出历史提取结果...';
+    try {
+      const resp = await fetchWithAuth(`/api/history/${recordId}/reload`);
+      const data = await resp.json();
+      if (!resp.ok) {
+        alert('载入失败: ' + (data.detail || '未知错误'));
+        statusEl.textContent = '';
+        return;
+      }
+      if (data.mode) {
+        switchMode(data.mode);
+      }
+      renderResult(data.package, data.excel_download_url, data.json_download_url);
+      const badge = document.getElementById('engineUsedBadge');
+      if (badge && data.engine_used) {
+        badge.style.display = 'inline-block';
+        badge.textContent = `${data.engine_used} (历史存档载入)`;
+      }
+      closeHistoryModal();
+      alert(`✅ 历史记录「${data.record.file_name}」已成功重新载入工作台！`);
+    } catch (e) {
+      alert('调取历史异常: ' + e);
+      statusEl.textContent = '';
+    }
+  }
+
+  async function deleteHistoryItem(recordId, fileName) {
+    if (!confirm(`确定要删除历史提取记录「${fileName}」及其沙箱生成的文件吗？`)) return;
+    try {
+      const resp = await fetchWithAuth(`/api/history/${recordId}`, { method: 'DELETE' });
+      if (resp.ok) {
+        allHistoryRecords = allHistoryRecords.filter(r => r.id !== recordId);
+        renderHistoryTable(allHistoryRecords);
+        refreshHistoryCount();
+        const statusEl = document.getElementById('historyActionStatus');
+        statusEl.style.color = 'var(--success)';
+        statusEl.textContent = `🗑️ 已成功删除「${fileName}」`;
+      } else {
+        const err = await resp.json();
+        alert('删除失败: ' + (err.detail || '未知错误'));
+      }
+    } catch (e) {
+      alert('删除异常: ' + e);
+    }
   }
 
   function switchMode(mode) {
@@ -1969,6 +2188,7 @@
         data.package.standard_info.source_file_url = data.source_file_url;
       }
       renderResult(data.package, data.excel_download_url, data.json_download_url);
+      refreshHistoryCount();
     } catch (err) {
       alert('请求异常: ' + err);
       msg.textContent = '请求异常';

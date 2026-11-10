@@ -24,6 +24,7 @@ from ..core.auth import AuthManager
 from ..core.classifier import StandardClassifier
 from ..core.extractor import StandardExtractorPipeline
 from ..core.feedback_learner import FeedbackRuleLearner
+from ..core.history import HistoryManager
 from ..core.lexicon_db import LexiconDB
 from ..core.llm_client import (
     CHAR_LIST_JSON_INSTRUCTION,
@@ -579,6 +580,20 @@ async def extract_from_uploaded_document(
             )
         package.standard_info.source_file_url = source_file_url
         downloads = _persist_artifacts(package, user_id=current_user.id)
+        is_char = isinstance(package, CharacteristicListPackage)
+        valid_cnt = len(package.characteristics) if is_char else len(package.check_items)
+        HistoryManager().record_extraction(
+            user_id=current_user.id,
+            file_name=file.filename or "uploaded.txt",
+            standard_category=package.standard_info.standard_category,
+            mode=mode,
+            engine_used=llm_client.display_label,
+            valid_count=valid_cnt,
+            pending_count=len(package.pending_review_items),
+            excel_url=downloads["excel_download_url"],
+            json_url=downloads["json_download_url"],
+            source_file_url=source_file_url,
+        )
         return {
             "mode": mode,
             "engine_used": llm_client.display_label,
@@ -815,6 +830,20 @@ def run_extraction(
                 manual_category=req.manual_category or None,
             )
         downloads = _persist_artifacts(package, user_id=current_user.id)
+        is_char = isinstance(package, CharacteristicListPackage)
+        valid_cnt = len(package.characteristics) if is_char else len(package.check_items)
+        HistoryManager().record_extraction(
+            user_id=current_user.id,
+            file_name=req.file_name,
+            standard_category=package.standard_info.standard_category,
+            mode=req.mode,
+            engine_used=engine_label,
+            valid_count=valid_cnt,
+            pending_count=len(package.pending_review_items),
+            excel_url=downloads["excel_download_url"],
+            json_url=downloads["json_download_url"],
+            source_file_url=package.standard_info.source_file_url or "",
+        )
         return {
             "mode": req.mode,
             "engine_used": engine_label,
@@ -997,3 +1026,72 @@ def download_artifact(
     if not target.exists():
         raise HTTPException(status_code=404, detail=f"文件不存在: {target.name}")
     return FileResponse(path=target, filename=target.name)
+
+
+@app.get("/api/history")
+def list_user_extraction_history(
+    limit: int = 50,
+    offset: int = 0,
+    user_id: Optional[int] = Query(None, description="管理员可选指定审计特定用户的 ID"),
+    current_user: UserResponse = Depends(get_current_user),
+):
+    """获取当前登录工程师的历史提取记录（支持多租户隔离与管理员审计特权）"""
+    target_user_id = user_id if current_user.is_admin else current_user.id
+    mgr = HistoryManager()
+    records = mgr.list_history(
+        user_id=target_user_id,
+        is_admin=current_user.is_admin,
+        limit=limit,
+        offset=offset,
+    )
+    total = mgr.count_history(user_id=target_user_id, is_admin=current_user.is_admin)
+    return {
+        "total": total,
+        "records": records,
+    }
+
+
+@app.get("/api/history/{record_id}/reload")
+def reload_history_package(
+    record_id: int,
+    current_user: UserResponse = Depends(get_current_user),
+):
+    """一键调出历史提取结果（返回完整结构化 package），供 Web 工作台无缝秒级重新载入与复核"""
+    mgr = HistoryManager()
+    try:
+        reloaded = mgr.reload_record_package(
+            record_id=record_id,
+            user_id=current_user.id,
+            is_admin=current_user.is_admin,
+        )
+        return reloaded
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e))
+    except (ValueError, FileNotFoundError) as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"载入历史结果失败: {e}")
+
+
+@app.delete("/api/history/{record_id}")
+def delete_history_record(
+    record_id: int,
+    current_user: UserResponse = Depends(get_current_user),
+):
+    """删除某条历史记录并清理用户沙箱中关联的导出文件（防越权）"""
+    mgr = HistoryManager()
+    try:
+        deleted = mgr.delete_record(
+            record_id=record_id,
+            user_id=current_user.id,
+            is_admin=current_user.is_admin,
+        )
+        if not deleted:
+            raise HTTPException(status_code=404, detail=f"历史记录 ID={record_id} 不存在")
+        return {"deleted": True, "record_id": record_id}
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e))
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"删除历史记录失败: {e}")
