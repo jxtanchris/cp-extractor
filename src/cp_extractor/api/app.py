@@ -398,6 +398,19 @@ def change_user_password(
         raise HTTPException(status_code=400, detail=str(e))
 
 
+@app.get("/api/admin/users")
+def list_admin_users(
+    admin_user: UserResponse = Depends(get_admin_user),
+):
+    """系统管理员浏览所有注册工程师账号及历史记录统计（仅系统管理员权限）"""
+    auth_mgr = AuthManager()
+    users = auth_mgr.list_all_users_with_stats()
+    return {
+        "total": len(users),
+        "users": users,
+    }
+
+
 @app.get("/api/config")
 def get_config():
     return get_providers_status()

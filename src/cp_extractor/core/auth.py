@@ -13,7 +13,7 @@ import secrets
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from ..schemas.auth import UserResponse
 
@@ -288,3 +288,52 @@ class AuthManager:
                 (new_pwd_hash, new_salt, user_id),
             )
             conn.commit()
+
+    def list_all_users_with_stats(self) -> List[Dict[str, Any]]:
+        """系统管理员浏览所有注册用户及其历史记录统计"""
+        with self._connect() as conn:
+            table_check = conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='extraction_history'"
+            ).fetchone()
+            if table_check:
+                sql = """
+                    SELECT 
+                        u.id,
+                        u.username,
+                        u.display_name,
+                        u.created_at,
+                        u.last_login_at,
+                        u.is_active,
+                        u.is_admin,
+                        (SELECT COUNT(*) FROM extraction_history h WHERE h.user_id = u.id) as history_count
+                    FROM users u
+                    ORDER BY u.id ASC
+                """
+            else:
+                sql = """
+                    SELECT 
+                        u.id,
+                        u.username,
+                        u.display_name,
+                        u.created_at,
+                        u.last_login_at,
+                        u.is_active,
+                        u.is_admin,
+                        0 as history_count
+                    FROM users u
+                    ORDER BY u.id ASC
+                """
+            rows = conn.execute(sql).fetchall()
+            result = []
+            for r in rows:
+                result.append({
+                    "id": r["id"],
+                    "username": r["username"],
+                    "display_name": r["display_name"] or "",
+                    "created_at": r["created_at"],
+                    "last_login_at": r["last_login_at"],
+                    "is_active": bool(r["is_active"]),
+                    "is_admin": bool(r["is_admin"]),
+                    "history_count": int(r["history_count"] or 0),
+                })
+            return result

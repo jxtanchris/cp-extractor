@@ -83,8 +83,8 @@ Web 工作台人工审核（支持条款号一键跳转 PDF 对应页码 #page=N
 | 自学习规则引擎 | `src/cp_extractor/core/feedback_learner.py` | 基于 SQLite (`learned_rules` 表) 观察记录工程师手工准入/驳回决策，采用严格核心名称匹配，累计达阈值 $N$ 次后自动更改软门禁直通规则、回填 IATF 16949 扩展字段、动态注入提示词并扩充词库 |
 | 多语言校验词库 | `src/cp_extractor/core/lexicon_db.py` | 基于 SQLite (`data/lexicon.db`) 管理中/英/日/德多语种量检具（`method`）、单位（`unit`）、判据（`criteria`）词条 |
 | 输出映射导出器 | `src/cp_extractor/core/mapper.py` | 将审核后数据导出为 15 列 IATF 16949 控制计划 Excel（`.xlsx`），自动补全完整 HTTP 基地址并写入条款 `#page=N` 蓝色超链接与多工作表报告 |
-| 用户认证与鉴权核心 | `src/cp_extractor/schemas/auth.py`, `src/cp_extractor/core/auth.py` | 提供 PBKDF2-HMAC-SHA256 密码加盐散列、HS256 JWT Token 签发与解析校验、个人密码自主安全修改、默认开箱管理员 `admin/admin`、非管理员 403 权限拦截与 401 强制登录保护 |
-| 解析历史管理模块 | `src/cp_extractor/core/history.py` | 基于 SQLite (`extraction_history` 表) 记录各工程师提取历史、多租户隔离查询、沙箱文件秒级重载回工作台与安全清理 |
+| 用户认证与鉴权核心 | `src/cp_extractor/schemas/auth.py`, `src/cp_extractor/core/auth.py` | 提供 PBKDF2-HMAC-SHA256 密码加盐散列、HS256 JWT Token 签发与解析校验、个人密码自主安全修改、系统管理员用户浏览与审计、默认开箱管理员 `admin/admin`、非管理员 403 权限拦截与 401 强制登录保护 |
+| 解析历史管理模块 | `src/cp_extractor/core/history.py` | 基于 SQLite (`extraction_history` 表) 记录各工程师提取历史、多租户隔离查询、系统管理员穿透审计指定用户历史、沙箱文件秒级重载回工作台与安全清理 |
 | 存储沙箱与多租户隔离 | `src/cp_extractor/api/app.py` | 实现 `output/users/{user_id}/` 沙箱隔离存储、Path Traversal 路径穿越防护、IDOR 水平越权拦截、Header + URL `?token=` 双通道下载/预览支持与自学习经验按用户隔离 |
 | Web 服务与工作台 | `src/cp_extractor/api/app.py` | 提供 REST API、源 PDF 在线预览、人工确认门禁复核、提示词配置中心与词库管理界面 |
 

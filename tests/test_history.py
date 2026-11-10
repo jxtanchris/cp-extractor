@@ -134,3 +134,66 @@ def test_api_history_isolation_and_idor_protection():
     del_resp = client.delete(f"/api/history/{record_id}", headers=headers_a)
     assert del_resp.status_code == 200
     assert del_resp.json()["deleted"] is True
+
+
+def test_admin_browse_users_and_audit_user_history():
+    """测试系统管理员浏览所有注册工程师用户、统计历史记录并指定穿透审计"""
+    # 1. 注册普通测试用户
+    u_engineer, headers_eng = _register_user("eng_audit")
+
+    # 获取系统默认管理员 admin
+    admin_login = client.post("/api/auth/login", json={"username": "admin", "password": "admin"})
+    assert admin_login.status_code == 200
+    admin_token = admin_login.json()["access_token"]
+    admin_headers = {"Authorization": f"Bearer {admin_token}"}
+
+    # 2. 普通工程师尝试调用管理员用户列表接口 -> 403 Forbidden 强行阻断
+    non_admin_resp = client.get("/api/admin/users", headers=headers_eng)
+    assert non_admin_resp.status_code == 403
+
+    # 3. 管理员调用用户列表接口 -> 200 OK
+    admin_users_resp = client.get("/api/admin/users", headers=admin_headers)
+    assert admin_users_resp.status_code == 200
+    data = admin_users_resp.json()
+    assert "users" in data
+    assert data["total"] >= 2
+    users = data["users"]
+    user_ids = [u["id"] for u in users]
+    assert u_engineer["id"] in user_ids
+
+    # 确认每个用户具备 history_count 字段
+    eng_info = next(u for u in users if u["id"] == u_engineer["id"])
+    assert "history_count" in eng_info
+    initial_count = eng_info["history_count"]
+
+    # 4. 普通工程师执行一次标准提取
+    sample_data = client.get("/api/samples/sample_tolerance_iso2768.md").json()
+    ext_resp = client.post(
+        "/api/extract",
+        json={
+            "file_name": "sample_tolerance_iso2768.md",
+            "content": sample_data["content"],
+            "engine_mode": "rule",
+        },
+        headers=headers_eng,
+    )
+    assert ext_resp.status_code == 200
+
+    # 5. 管理员再次浏览用户列表 -> 普通工程师的 history_count 正确递增
+    admin_users_again = client.get("/api/admin/users", headers=admin_headers).json()["users"]
+    updated_eng = next(u for u in admin_users_again if u["id"] == u_engineer["id"])
+    assert updated_eng["history_count"] == initial_count + 1
+
+    # 6. 管理员直接穿透审计该用户的专属历史记录 (GET /api/history?user_id=...)
+    audit_resp = client.get(f"/api/history?user_id={u_engineer['id']}", headers=admin_headers)
+    assert audit_resp.status_code == 200
+    audit_data = audit_resp.json()
+    assert audit_data["total"] >= 1
+    assert all(r["user_id"] == u_engineer["id"] for r in audit_data["records"])
+
+    # 7. 管理员特权重载该工程师的历史归档结果
+    target_record_id = audit_data["records"][0]["id"]
+    reload_resp = client.get(f"/api/history/{target_record_id}/reload", headers=admin_headers)
+    assert reload_resp.status_code == 200
+    assert "package" in reload_resp.json()
+

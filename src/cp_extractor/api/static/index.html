@@ -873,6 +873,9 @@
         <button type="button" class="top-dropdown-item" onclick="closeAllDropdowns(); openLearningModal();">
           <span>🧠 人工自学习规则 (<span id="topLearnedCount">0</span>)</span>
         </button>
+        <button type="button" class="top-dropdown-item" id="configAdminUsersItem" style="display:none;" onclick="closeAllDropdowns(); openAdminUsersModal();">
+          <span>👥 工程师用户与历史审计</span>
+        </button>
         <div class="top-dropdown-divider"></div>
         <a href="/docs" target="_blank" class="top-dropdown-item" onclick="closeAllDropdowns()">
           <span>📖 API 开放接口文档 ↗</span>
@@ -903,6 +906,9 @@
           </div>
           <button type="button" class="top-dropdown-item" id="changePwdBtn" onclick="closeAllDropdowns(); openChangePasswordModal();">
             <span>🔒 修改登录密码</span>
+          </button>
+          <button type="button" class="top-dropdown-item" id="userAdminUsersItem" style="display:none;" onclick="closeAllDropdowns(); openAdminUsersModal();">
+            <span>👥 工程师用户与历史审计</span>
           </button>
           <div class="top-dropdown-divider"></div>
           <button type="button" class="top-dropdown-item danger" id="logoutBtn" onclick="closeAllDropdowns(); handleLogout();">
@@ -1201,13 +1207,65 @@
   </div>
 </div>
 
+<!-- 系统管理员用户列表与历史审计模态框 -->
+<div class="modal-backdrop" id="adminUsersModal" style="display:none; z-index:9992;" onclick="if(event.target===this) closeAdminUsersModal()">
+  <div class="modal modal-lg" style="width:960px; max-width:96vw;">
+    <div class="prompt-modal-header">
+      <div>
+        <h3 style="margin:0; font-size:16px; font-weight:700; color:#0f172a;">👥 工程师用户与解析历史审计</h3>
+        <div style="font-size:12px; color:var(--muted); margin-top:2px;">
+          浏览系统全部注册账号、权限级别与各自提取历史统计，点击即可穿透审计任一工程师的解析归档。
+        </div>
+      </div>
+      <button class="btn-sm" style="background:#f1f5f9; border:1px solid #e2e8f0; color:#64748b; cursor:pointer;" onclick="closeAdminUsersModal()">✖ 关闭</button>
+    </div>
+
+    <div style="padding:14px 18px; display:flex; flex-direction:column; gap:10px; flex:1; overflow:hidden;">
+      <div style="display:flex; justify-content:space-between; align-items:center; background:#f8fafc; border:1px solid var(--border); padding:8px 12px; border-radius:6px; font-size:12.5px;">
+        <span>系统总用户数: <b id="adminUsersTotalCount" style="color:var(--primary);">0</b> 位工程师</span>
+        <div style="display:flex; gap:8px;">
+          <input type="text" id="adminUsersSearchInput" class="form-control" style="width:220px; font-size:12px; padding:4px 8px;" placeholder="🔍 搜索用户名或姓名..." oninput="filterAdminUsersTable()" />
+          <button type="button" class="btn-sm" style="background:#eff6ff; color:var(--primary); border:1px solid #bfdbfe; font-weight:600;" onclick="loadAdminUsers()">🔄 刷新用户</button>
+        </div>
+      </div>
+
+      <div class="table-wrap" style="flex:1; overflow:auto; max-height:480px;">
+        <table>
+          <thead>
+            <tr>
+              <th style="width:50px;">UID</th>
+              <th style="width:130px;">用户名 (账号)</th>
+              <th style="width:140px;">工程师姓名/部门</th>
+              <th style="width:110px;">系统角色</th>
+              <th style="width:110px;">历史解析数</th>
+              <th style="width:150px;">注册时间</th>
+              <th style="width:150px;">最近登录</th>
+              <th style="width:130px; text-align:center;">操作</th>
+            </tr>
+          </thead>
+          <tbody id="adminUsersTableBody">
+            <tr>
+              <td colspan="8" style="text-align:center; padding:40px; color:var(--muted);">正在加载工程师列表...</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="prompt-modal-footer" style="display:flex; justify-content:space-between; align-items:center;">
+      <span style="font-size:11.5px; color:var(--muted);">💡 提示：点击「📁 浏览历史」可直接调阅对应工程师名下的所有控制计划解析与导出报表</span>
+      <button class="btn-sm" style="background:#f1f5f9; border:1px solid #cbd5e1; color:#475569;" onclick="closeAdminUsersModal()">关闭</button>
+    </div>
+  </div>
+</div>
+
 <!-- 解析历史记录管理模态框 -->
-<div class="modal-backdrop" id="historyModal" style="display:none; z-index:9990;">
+<div class="modal-backdrop" id="historyModal" style="display:none; z-index:9990;" onclick="if(event.target===this) closeHistoryModal()">
   <div class="modal modal-lg" style="width:980px; max-width:96vw;">
     <div class="prompt-modal-header">
       <div>
-        <h3 style="margin:0; font-size:16px;">📁 个人专属标准解析历史记录</h3>
-        <div style="font-size:12px; color:var(--muted); margin-top:2px;">
+        <h3 style="margin:0; font-size:16px;" id="historyModalTitle">📁 个人专属标准解析历史记录</h3>
+        <div style="font-size:12px; color:var(--muted); margin-top:2px;" id="historyModalSubtitle">
           严格基于多租户沙箱物理隔离，仅呈现您的专属历史记录。支持一键将历史结构化结果调回工作台继续复核或快速下载 Excel。
         </div>
       </div>
@@ -1216,9 +1274,22 @@
 
     <div style="padding:14px 18px; display:flex; flex-direction:column; gap:10px; flex:1; overflow:hidden;">
       <div style="display:flex; justify-content:space-between; align-items:center; background:#f8fafc; border:1px solid var(--border); padding:8px 12px; border-radius:6px; font-size:12.5px;">
-        <span>共找到 <b id="historyTotalCount" style="color:var(--primary);">0</b> 条专属提取记录</span>
-        <div style="display:flex; gap:8px;">
-          <input type="text" id="historySearchInput" class="form-control" style="width:200px; font-size:12px; padding:4px 8px;" placeholder="🔍 搜索文件名或类别..." oninput="filterHistoryTable()" />
+        <div style="display:flex; align-items:center; gap:8px;">
+          <span>共找到 <b id="historyTotalCount" style="color:var(--primary);">0</b> 条记录</span>
+          <span id="historyAuditBadge" style="display:none; background:#eff6ff; color:#1d4ed8; border:1px solid #bfdbfe; padding:2px 8px; border-radius:4px; font-size:11.5px; font-weight:600;">
+            👁️ 正在审计: <span id="historyAuditTargetName">全体用户</span>
+            <a href="javascript:void(0)" onclick="clearAdminHistoryAuditUser()" style="color:#2563eb; margin-left:6px; text-decoration:underline;">[返回全部]</a>
+          </span>
+        </div>
+        <div style="display:flex; gap:8px; align-items:center;">
+          <!-- 管理员专享用户筛选下拉框 -->
+          <div id="historyAdminUserFilterWrap" style="display:none; align-items:center; gap:4px;">
+            <span style="font-size:12px; color:#475569; font-weight:600;">工程师:</span>
+            <select id="historyAdminUserSelect" class="form-control" style="width:150px; font-size:12px; padding:3px 6px;" onchange="onAdminHistoryUserSelectChange()">
+              <option value="">-- 全体工程师 --</option>
+            </select>
+          </div>
+          <input type="text" id="historySearchInput" class="form-control" style="width:180px; font-size:12px; padding:4px 8px;" placeholder="🔍 搜索文件名或类别..." oninput="filterHistoryTable()" />
           <button type="button" class="btn-sm" style="background:#eff6ff; color:var(--primary); border:1px solid #bfdbfe; font-weight:600;" onclick="loadHistoryRecords()">🔄 刷新列表</button>
         </div>
       </div>
@@ -1694,7 +1765,12 @@
       if (changePwdBtn) changePwdBtn.style.display = 'flex';
       if (logoutBtn) logoutBtn.style.display = 'flex';
 
+      const configAdminUsersItem = document.getElementById('configAdminUsersItem');
+      const userAdminUsersItem = document.getElementById('userAdminUsersItem');
+
       if (currentUser.is_admin) {
+        if (configAdminUsersItem) configAdminUsersItem.style.display = 'flex';
+        if (userAdminUsersItem) userAdminUsersItem.style.display = 'flex';
         if (adminKeyOnlyBadge) adminKeyOnlyBadge.style.display = 'inline-block';
         if (normalUserKeyNotice) normalUserKeyNotice.style.display = 'none';
         if (adminSyncEnvRow) adminSyncEnvRow.style.display = 'flex';
@@ -1703,6 +1779,8 @@
           dsApiKeyInput.disabled = false;
         }
       } else {
+        if (configAdminUsersItem) configAdminUsersItem.style.display = 'none';
+        if (userAdminUsersItem) userAdminUsersItem.style.display = 'none';
         if (adminKeyOnlyBadge) adminKeyOnlyBadge.style.display = 'none';
         if (normalUserKeyNotice) normalUserKeyNotice.style.display = 'block';
         if (adminSyncEnvRow) adminSyncEnvRow.style.display = 'none';
@@ -1712,6 +1790,10 @@
         }
       }
     } else {
+      const configAdminUsersItem = document.getElementById('configAdminUsersItem');
+      const userAdminUsersItem = document.getElementById('userAdminUsersItem');
+      if (configAdminUsersItem) configAdminUsersItem.style.display = 'none';
+      if (userAdminUsersItem) userAdminUsersItem.style.display = 'none';
       if (userDropdown) userDropdown.style.display = 'none';
       if (userBadge) userBadge.style.display = 'none';
       if (authBtn) authBtn.style.display = 'inline-block';
@@ -1975,10 +2057,117 @@
     refreshHistoryCount();
   }
 
+  // ================= 系统管理员用户管理与历史审计 =================
+  let allAdminUsers = [];
+  let currentAuditUserId = null; // null 表示当前用户自己的视角（或全局审计）
+  let currentAuditUserName = '';
+
+  function openAdminUsersModal() {
+    if (!currentUser || !currentUser.is_admin) {
+      alert('权限不足：仅系统管理员允许浏览用户列表与审计历史记录！');
+      return;
+    }
+    document.getElementById('adminUsersModal').style.display = 'flex';
+    const searchInput = document.getElementById('adminUsersSearchInput');
+    if (searchInput) searchInput.value = '';
+    loadAdminUsers();
+  }
+
+  function closeAdminUsersModal() {
+    document.getElementById('adminUsersModal').style.display = 'none';
+  }
+
+  async function loadAdminUsers() {
+    const tbody = document.getElementById('adminUsersTableBody');
+    tbody.innerHTML = '<tr><td colspan="8" style="text-align:center; padding:30px; color:var(--muted);">正在加载工程师账号列表...</td></tr>';
+    try {
+      const resp = await fetchWithAuth('/api/admin/users');
+      if (!resp.ok) {
+        tbody.innerHTML = '<tr><td colspan="8" style="text-align:center; padding:30px; color:var(--danger);">加载用户列表失败</td></tr>';
+        return;
+      }
+      const data = await resp.json();
+      allAdminUsers = data.users || [];
+      document.getElementById('adminUsersTotalCount').textContent = data.total || 0;
+      renderAdminUsersTable(allAdminUsers);
+      populateAdminUserSelect(allAdminUsers);
+    } catch (e) {
+      tbody.innerHTML = `<tr><td colspan="8" style="text-align:center; padding:30px; color:var(--danger);">网络或服务异常: ${e}</td></tr>`;
+    }
+  }
+
+  function renderAdminUsersTable(users) {
+    const tbody = document.getElementById('adminUsersTableBody');
+    if (!users || users.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="8" style="text-align:center; padding:40px; color:var(--muted);">未找到符合条件的工程师账号</td></tr>';
+      return;
+    }
+    tbody.innerHTML = users.map(u => {
+      const createdStr = u.created_at ? u.created_at.replace('T', ' ').slice(0, 19) : '-';
+      const loginStr = u.last_login_at ? u.last_login_at.replace('T', ' ').slice(0, 19) : '<span style="color:#94a3b8;">从未登录</span>';
+      const roleBadge = u.is_admin
+        ? '<span class="badge" style="background:#fef3c7; color:#b45309; font-weight:700;">👑 管理员</span>'
+        : '<span class="badge" style="background:#f1f5f9; color:#475569;">👤 质量工程师</span>';
+      const displayName = u.display_name ? escapeHtml(u.display_name) : '<span style="color:#94a3b8;">-</span>';
+      const historyBadge = `<span class="badge ${u.history_count > 0 ? 'badge-high' : 'badge-med'}">${u.history_count} 条记录</span>`;
+      const isCurrent = currentUser && currentUser.id === u.id;
+
+      return `
+        <tr style="${isCurrent ? 'background:#f0f9ff;' : ''}">
+          <td style="font-weight:700; color:#475569;">#${u.id}</td>
+          <td style="font-weight:600; color:#0f172a;">
+            ${escapeHtml(u.username)}
+            ${isCurrent ? '<span style="font-size:10px; color:#2563eb; margin-left:4px;">(当前)</span>' : ''}
+          </td>
+          <td>${displayName}</td>
+          <td>${roleBadge}</td>
+          <td>${historyBadge}</td>
+          <td style="font-size:11.5px; color:var(--muted); font-family:monospace;">${createdStr}</td>
+          <td style="font-size:11.5px; color:var(--muted); font-family:monospace;">${loginStr}</td>
+          <td style="text-align:center;">
+            <button type="button" class="btn-sm" style="background:#eff6ff; color:var(--primary); border:1px solid #bfdbfe; font-weight:600; cursor:pointer; padding:3px 8px; font-size:11.5px;" onclick="auditSpecificUserHistory(${u.id}, '${escapeHtml(u.display_name || u.username)}')">
+              📁 浏览历史 (${u.history_count})
+            </button>
+          </td>
+        </tr>
+      `;
+    }).join('');
+  }
+
+  function filterAdminUsersTable() {
+    const q = (document.getElementById('adminUsersSearchInput').value || '').trim().toLowerCase();
+    if (!q) {
+      renderAdminUsersTable(allAdminUsers);
+      return;
+    }
+    const filtered = allAdminUsers.filter(u =>
+      (u.username && u.username.toLowerCase().includes(q)) ||
+      (u.display_name && u.display_name.toLowerCase().includes(q))
+    );
+    renderAdminUsersTable(filtered);
+  }
+
+  function populateAdminUserSelect(users) {
+    const sel = document.getElementById('historyAdminUserSelect');
+    if (!sel) return;
+    sel.innerHTML = '<option value="">-- 全体工程师 (全局) --</option>' + users.map(u => {
+      const name = u.display_name ? `${u.display_name} (${u.username})` : u.username;
+      return `<option value="${u.id}">${escapeHtml(name)} [${u.history_count}条]</option>`;
+    }).join('');
+    if (currentAuditUserId) {
+      sel.value = String(currentAuditUserId);
+    }
+  }
+
+  function auditSpecificUserHistory(userId, userName) {
+    closeAdminUsersModal();
+    openHistoryModal(userId, userName);
+  }
+
   // ================= 个人专属标准解析历史记录管理 =================
   let allHistoryRecords = [];
 
-  function openHistoryModal() {
+  function openHistoryModal(targetUserId = null, targetUserName = '') {
     if (!currentUser || !authToken) {
       openAuthModal();
       showAuthError('查看历史记录前请先登录！');
@@ -1986,7 +2175,67 @@
     }
     document.getElementById('historyModal').style.display = 'flex';
     document.getElementById('historyActionStatus').textContent = '';
+
+    if (targetUserId !== null) {
+      currentAuditUserId = targetUserId;
+      currentAuditUserName = targetUserName;
+    }
+
+    const filterWrap = document.getElementById('historyAdminUserFilterWrap');
+    if (filterWrap) {
+      filterWrap.style.display = (currentUser && currentUser.is_admin) ? 'flex' : 'none';
+      if (currentUser && currentUser.is_admin && allAdminUsers.length === 0) {
+        fetchWithAuth('/api/admin/users').then(r => r.json()).then(d => {
+          allAdminUsers = d.users || [];
+          populateAdminUserSelect(allAdminUsers);
+        }).catch(()=>{});
+      }
+    }
+
+    updateHistoryAuditUI();
     loadHistoryRecords();
+  }
+
+  function updateHistoryAuditUI() {
+    const badge = document.getElementById('historyAuditBadge');
+    const targetNameSpan = document.getElementById('historyAuditTargetName');
+    const sel = document.getElementById('historyAdminUserSelect');
+    const title = document.getElementById('historyModalTitle');
+
+    if (currentUser && currentUser.is_admin && currentAuditUserId) {
+      if (badge) badge.style.display = 'inline-block';
+      if (targetNameSpan) targetNameSpan.textContent = currentAuditUserName || `UID: ${currentAuditUserId}`;
+      if (title) title.textContent = `📁 工程师「${currentAuditUserName || currentAuditUserId}」专属解析历史`;
+      if (sel) sel.value = String(currentAuditUserId);
+    } else {
+      if (badge) badge.style.display = 'none';
+      if (title) title.textContent = (currentUser && currentUser.is_admin)
+        ? '📁 全局标准解析历史记录审计 (管理员)'
+        : '📁 个人专属标准解析历史记录';
+      if (sel) sel.value = '';
+    }
+  }
+
+  function clearAdminHistoryAuditUser() {
+    currentAuditUserId = null;
+    currentAuditUserName = '';
+    updateHistoryAuditUI();
+    loadHistoryRecords();
+  }
+
+  function onAdminHistoryUserSelectChange() {
+    const sel = document.getElementById('historyAdminUserSelect');
+    const val = sel.value;
+    if (!val) {
+      clearAdminHistoryAuditUser();
+    } else {
+      const u = allAdminUsers.find(x => String(x.id) === String(val));
+      const uName = u ? (u.display_name || u.username) : `UID ${val}`;
+      currentAuditUserId = parseInt(val, 10);
+      currentAuditUserName = uName;
+      updateHistoryAuditUI();
+      loadHistoryRecords();
+    }
   }
 
   function closeHistoryModal() {
@@ -2011,9 +2260,13 @@
 
   async function loadHistoryRecords() {
     const tbody = document.getElementById('historyTableBody');
-    tbody.innerHTML = '<tr><td colspan="8" style="text-align:center; padding:30px; color:var(--muted);">正在加载您的专属解析历史...</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="8" style="text-align:center; padding:30px; color:var(--muted);">正在加载解析历史...</td></tr>';
     try {
-      const resp = await fetchWithAuth('/api/history?limit=100');
+      let url = '/api/history?limit=100';
+      if (currentUser && currentUser.is_admin && currentAuditUserId) {
+        url += `&user_id=${currentAuditUserId}`;
+      }
+      const resp = await fetchWithAuth(url);
       if (!resp.ok) {
         tbody.innerHTML = '<tr><td colspan="8" style="text-align:center; padding:30px; color:var(--danger);">加载历史记录失败</td></tr>';
         return;
@@ -2021,8 +2274,10 @@
       const data = await resp.json();
       allHistoryRecords = data.records || [];
       document.getElementById('historyTotalCount').textContent = data.total || 0;
-      const topCount = document.getElementById('topHistoryCount');
-      if (topCount) topCount.textContent = data.total || 0;
+      if (!currentAuditUserId) {
+        const topCount = document.getElementById('topHistoryCount');
+        if (topCount) topCount.textContent = data.total || 0;
+      }
       renderHistoryTable(allHistoryRecords);
     } catch (e) {
       tbody.innerHTML = `<tr><td colspan="8" style="text-align:center; padding:30px; color:var(--danger);">网络或服务异常: ${e}</td></tr>`;

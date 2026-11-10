@@ -542,6 +542,10 @@ def test_frontend_auth_elements_present():
     assert '个人定制' in html
     # 验证登录模态框中无默认账号密码提示
     assert '系统管理员初始账号密码为' not in html
+    # 验证系统管理员用户管理与历史审计模态框
+    assert 'id="adminUsersModal"' in html
+    assert 'id="adminUsersTableBody"' in html
+    assert 'id="historyAdminUserSelect"' in html
 
 
 def test_user_change_password_workflow():
