@@ -632,8 +632,11 @@ def test_logout_frontend_resets_workspace_state():
     assert "kpiCategory" in html
     assert "validTableBody" in html
     assert "pendingContainer" in html
-    # 4. 验证登出及 401 中调用了 resetWorkspaceState
+    # 4. 验证登出及 401 中调用了 resetWorkspaceState，并且不存在 loadTemplateList 异常调用
     assert "resetWorkspaceState();" in html
+    assert "loadTemplateList" not in html
+    assert "headerViewTextBtn" in html
+    assert "viewValid" in html
 
 
 

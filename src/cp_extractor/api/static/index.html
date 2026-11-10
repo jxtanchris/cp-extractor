@@ -1877,9 +1877,8 @@
       localStorage.setItem('cp_auth_user', JSON.stringify(currentUser));
       updateAuthUI();
       closeAuthModal();
-      refreshLearningBadge();
-      loadTemplateList();
-      refreshHistoryCount();
+      try { refreshLearningBadge(); } catch (e) {}
+      try { refreshHistoryCount(); } catch (e) {}
     } catch (e) {
       showAuthError('网络或服务异常: ' + e);
     } finally {
@@ -1920,9 +1919,8 @@
       localStorage.setItem('cp_auth_user', JSON.stringify(currentUser));
       updateAuthUI();
       closeAuthModal();
-      refreshLearningBadge();
-      loadTemplateList();
-      refreshHistoryCount();
+      try { refreshLearningBadge(); } catch (e) {}
+      try { refreshHistoryCount(); } catch (e) {}
       alert(`注册成功！欢迎您，${currentUser.display_name || currentUser.username}`);
     } catch (e) {
       showAuthError('网络或服务异常: ' + e);
@@ -1933,80 +1931,111 @@
   }
 
   function resetWorkspaceState() {
-    // 1. 清空当前文件及上传区域
-    selectedFile = null;
-    const fileInput = document.getElementById('fileInput');
-    if (fileInput) fileInput.value = '';
-    const dropzone = document.getElementById('dropzone');
-    if (dropzone) {
-      dropzone.classList.remove('has-file');
-      const dzIcon = document.getElementById('dzIcon');
-      if (dzIcon) dzIcon.textContent = '📄';
-      const dzTitle = document.getElementById('dzTitle');
-      if (dzTitle) dzTitle.innerHTML = '点击、拖拽文档 或 按 <kbd style="background:#e2e8f0; border-radius:3px; padding:1px 5px; font-size:11px; font-family:inherit;">Cmd+V</kbd> 粘贴截图';
-      const dzSub = document.getElementById('dzSub');
-      if (dzSub) dzSub.textContent = '支持 PDF (含扫描件)、Word (.docx)、截图及 Markdown';
-    }
-    const previewImg = document.getElementById('dzPreviewImg');
-    if (previewImg) {
-      previewImg.src = '';
-      previewImg.style.display = 'none';
-    }
-    const parsedMeta = document.getElementById('fileParsedMeta');
-    if (parsedMeta) parsedMeta.textContent = '尚未选择文件';
-    const statusMsg = document.getElementById('statusMsg');
-    if (statusMsg) {
-      statusMsg.textContent = '';
-      statusMsg.className = 'status-msg';
-    }
+    try {
+      // 1. 清空当前文件及上传区域
+      selectedFile = null;
+      const fileInput = document.getElementById('fileInput');
+      if (fileInput) fileInput.value = '';
+      const dropzone = document.getElementById('dropzone');
+      if (dropzone) {
+        dropzone.classList.remove('has-file');
+        const dzIcon = document.getElementById('dzIcon');
+        if (dzIcon) dzIcon.textContent = '📄';
+        const dzTitle = document.getElementById('dzTitle');
+        if (dzTitle) dzTitle.innerHTML = '点击、拖拽文档 或 按 <kbd style="background:#e2e8f0; border-radius:3px; padding:1px 5px; font-size:11px; font-family:inherit;">Cmd+V</kbd> 粘贴截图';
+        const dzSub = document.getElementById('dzSub');
+        if (dzSub) dzSub.textContent = '支持 PDF (含扫描件)、Word (.docx)、截图及 Markdown';
+      }
+      const previewImg = document.getElementById('dzPreviewImg');
+      if (previewImg) {
+        previewImg.src = '';
+        previewImg.style.display = 'none';
+      }
+      const parsedMeta = document.getElementById('fileParsedMeta');
+      if (parsedMeta) parsedMeta.textContent = '尚未选择文件';
+      const statusMsg = document.getElementById('statusMsg');
+      if (statusMsg) {
+        statusMsg.textContent = '';
+        statusMsg.className = 'status-msg';
+      }
+      const headerBtn = document.getElementById('headerViewTextBtn');
+      if (headerBtn) headerBtn.style.display = 'none';
 
-    // 2. 清空全局数据对象
-    currentPackage = null;
-    currentParsedText = '';
-    currentParsedMeta = null;
-    allHistoryRecords = [];
-    allAdminUsers = [];
-    currentAuditUserId = null;
-    currentAuditUserName = '';
+      // 2. 清空全局数据对象
+      currentPackage = null;
+      currentParsedText = '';
+      currentParsedMeta = null;
+      allHistoryRecords = [];
+      allAdminUsers = [];
+      currentAuditUserId = null;
+      currentAuditUserName = '';
 
-    // 3. 复位 KPI 统计与 Tab 计数
-    const kpiCat = document.getElementById('kpiCategory'); if (kpiCat) kpiCat.textContent = '-';
-    const kpiClauses = document.getElementById('kpiClauses'); if (kpiClauses) kpiClauses.textContent = '0';
-    const kpiValid = document.getElementById('kpiValid'); if (kpiValid) kpiValid.textContent = '0';
-    const kpiPending = document.getElementById('kpiPending'); if (kpiPending) kpiPending.textContent = '0';
-    const kpiConf = document.getElementById('kpiConf'); if (kpiConf) kpiConf.textContent = '0 / 0 / 0';
-    const tabValid = document.getElementById('tabCountValid'); if (tabValid) tabValid.textContent = '0';
-    const tabPending = document.getElementById('tabCountPending'); if (tabPending) tabPending.textContent = '0';
+      // 3. 复位 KPI 统计与 Tab 计数
+      const kpiCat = document.getElementById('kpiCategory'); if (kpiCat) kpiCat.textContent = '-';
+      const kpiClauses = document.getElementById('kpiClauses'); if (kpiClauses) kpiClauses.textContent = '0';
+      const kpiValid = document.getElementById('kpiValid'); if (kpiValid) kpiValid.textContent = '0';
+      const kpiPending = document.getElementById('kpiPending'); if (kpiPending) kpiPending.textContent = '0';
+      const kpiConf = document.getElementById('kpiConf'); if (kpiConf) kpiConf.textContent = '0 / 0 / 0';
+      const tabValid = document.getElementById('tabCountValid'); if (tabValid) tabValid.textContent = '0';
+      const tabPending = document.getElementById('tabCountPending'); if (tabPending) tabPending.textContent = '0';
 
-    // 4. 复位右侧表格与输出区域
-    const validTbody = document.getElementById('validTableBody');
-    if (validTbody) {
-      validTbody.innerHTML = `
-        <tr>
-          <td colspan="12" style="text-align:center; padding:60px 20px; color:var(--muted);">
-            请在左侧 <b>① 上传 PDF/Word 标准文档</b> &rarr; <b>② 选择文档所属类别</b> &rarr; <b>③ 点击「开始提取检查项」</b>
-          </td>
-        </tr>
-      `;
+      // 4. 复位右侧表格为初始完整标准表格结构与初始占位提示
+      const viewValid = document.getElementById('viewValid');
+      if (viewValid) {
+        viewValid.innerHTML = `
+          <table>
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>过程名称/工序</th>
+                <th>特性名称 (规范名)</th>
+                <th>特殊特性分类</th>
+                <th>产品/过程规范公差</th>
+                <th>评价/测量技术</th>
+                <th>检查 / 试验方法</th>
+                <th>判定准则</th>
+                <th>样本容量/频次</th>
+                <th>控制方法 / 反应计划</th>
+                <th>条款号</th>
+                <th>原文引用摘录 (溯源)</th>
+                <th>置信度</th>
+              </tr>
+            </thead>
+            <tbody id="validTableBody">
+              <tr>
+                <td colspan="12" style="text-align:center; padding:60px 20px; color:var(--muted);">
+                  请在左侧 <b>① 上传 PDF/Word 标准文档</b> &rarr; <b>② 选择文档所属类别</b> &rarr; <b>③ 点击「开始提取检查项」</b>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        `;
+      }
+      const pendingBox = document.getElementById('pendingContainer');
+      if (pendingBox) {
+        pendingBox.innerHTML = '<div style="text-align:center; padding:60px 20px; color:var(--muted);">暂无待人工确认项</div>';
+      }
+      const reportSum = document.getElementById('reportSummary'); if (reportSum) reportSum.innerHTML = '';
+      const jsonOut = document.getElementById('jsonOutput'); if (jsonOut) jsonOut.textContent = '';
+      const exportBar = document.getElementById('exportBar'); if (exportBar) exportBar.innerHTML = '';
+      const engineBadge = document.getElementById('engineUsedBadge');
+      if (engineBadge) {
+        engineBadge.style.display = 'none';
+        engineBadge.textContent = '';
+      }
+      const toastBanner = document.getElementById('learningToastBanner'); if (toastBanner) toastBanner.style.display = 'none';
+
+      // 5. 关闭可能处于打开状态的弹窗
+      const histModal = document.getElementById('historyModal'); if (histModal) histModal.style.display = 'none';
+      const adminModal = document.getElementById('adminUsersModal'); if (adminModal) adminModal.style.display = 'none';
+      const pwdModal = document.getElementById('changePasswordModal'); if (pwdModal) pwdModal.style.display = 'none';
+      const parsedTextModal = document.getElementById('parsedTextModal'); if (parsedTextModal) parsedTextModal.style.display = 'none';
+
+      // 6. 切换回首个 Tab
+      if (typeof switchRightTab === 'function') switchRightTab('valid');
+    } catch (e) {
+      console.error('resetWorkspaceState error:', e);
     }
-    const pendingBox = document.getElementById('pendingContainer');
-    if (pendingBox) {
-      pendingBox.innerHTML = '<div style="text-align:center; padding:60px 20px; color:var(--muted);">暂无待人工确认项</div>';
-    }
-    const reportSum = document.getElementById('reportSummary'); if (reportSum) reportSum.innerHTML = '';
-    const jsonOut = document.getElementById('jsonOutput'); if (jsonOut) jsonOut.textContent = '';
-    const exportBar = document.getElementById('exportBar'); if (exportBar) exportBar.innerHTML = '';
-    const engineBadge = document.getElementById('engineUsedBadge'); if (engineBadge) engineBadge.style.display = 'none';
-    const toastBanner = document.getElementById('learningToastBanner'); if (toastBanner) toastBanner.style.display = 'none';
-
-    // 5. 关闭可能处于打开状态的弹窗
-    const histModal = document.getElementById('historyModal'); if (histModal) histModal.style.display = 'none';
-    const adminModal = document.getElementById('adminUsersModal'); if (adminModal) adminModal.style.display = 'none';
-    const pwdModal = document.getElementById('changePasswordModal'); if (pwdModal) pwdModal.style.display = 'none';
-    const parsedTextModal = document.getElementById('parsedTextModal'); if (parsedTextModal) parsedTextModal.style.display = 'none';
-
-    // 6. 切换回首个 Tab
-    if (typeof switchRightTab === 'function') switchRightTab('valid');
   }
 
   async function handleLogout() {
@@ -2015,17 +2044,37 @@
       if (authToken) {
         await fetchWithAuth('/api/auth/logout', { method: 'POST' });
       }
-    } catch (e) {}
+    } catch (e) {
+      console.warn('Logout API error:', e);
+    }
+    // 1. 清空凭证
     authToken = '';
     currentUser = null;
     localStorage.removeItem('cp_auth_token');
     localStorage.removeItem('cp_auth_user');
-    updateAuthUI();
-    loadTemplateList();
-    refreshLearningBadge();
+
+    // 2. 无论接口响应如何，坚决彻底清空工作台所有数据
+    try {
+      resetWorkspaceState();
+    } catch (e) {
+      console.error('Reset workspace state error:', e);
+    }
+
+    // 3. 复位顶部历史记录数字
     const topCount = document.getElementById('topHistoryCount');
     if (topCount) topCount.textContent = '0';
-    resetWorkspaceState();
+
+    // 4. 更新认证状态 UI
+    try {
+      updateAuthUI();
+    } catch (e) {
+      console.error('Update auth UI error:', e);
+    }
+
+    // 5. 刷新规则自学习角标
+    try {
+      refreshLearningBadge();
+    } catch (e) {}
   }
 
   function openChangePasswordModal() {
