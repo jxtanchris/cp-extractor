@@ -106,6 +106,7 @@ CP/
 ├── pyproject.toml                  # Python 项目依赖与构建配置
 ├── .env.example                    # 环境变量配置模板
 ├── start_lan.sh                    # 局域网共享一键启动脚本
+├── start_mac.command               # Apple Silicon (M系列芯片) macOS 一键双击初始化与启动脚本
 ├── templates/                      # 系统出厂官方提示词模板与插件目录 (零污染保护)
 │   ├── base_template.md            # 公共基础提取模板 (全局判定规则 + 顺序锚定 + Product/Process CTQ)
 │   ├── validation_template.md      # 后处理校验与二次自纠错模板
@@ -225,10 +226,88 @@ pip install -e ".[dev]"
 
 ---
 
+## 🍎 Apple Silicon (M 系列芯片) 分发与部署指南
+
+针对搭载 Apple Silicon (M1 / M2 / M3 / M4 系列芯片) 的苹果电脑，CP-Extractor 针对 macOS 纯原生神经引擎（Apple Vision OCR）进行了深度优化，零 C++ 扩展编译障碍，提供 3 种典型分发与部署形态：
+
+### 🌟 方案一（最推荐、零环境配置）：局域网共享模式（1 台部署，全科室免装直接用）
+
+**适用场景**：科室/团队办公、同一个 Wi-Fi 或办公局域网下，**其他同事的电脑完全不需要安装任何 Python 或环境**。
+
+由于系统已原生内置多租户隔离、账号自主注册、沙箱存储与历史记录物理隔离：
+1. 只需在您当前（或任意一台常开）的 M 芯片 Mac 终端中运行：
+   ```bash
+   ./start_lan.sh
+   ```
+2. 终端会自动输出当前电脑的局域网 IP（例如 `http://192.168.1.100:8000`）；
+3. **其他同事无论使用 M 芯片 Mac、Intel Mac 还是 Windows 电脑**：
+   - 无需配置任何运行环境，直接在 Safari 或 Chrome 浏览器中访问 `http://192.168.1.100:8000`；
+   - 点击右上角「🔑 登录 / 注册」即可各自注册独立工程师账号；
+   - 各自的上传文档、历史记录、导出报表、自学习规则物理沙箱隔离，互不干扰。
+
+---
+
+### 💻 方案二（单机离线运行）：U 盘 / 压缩包离线分发 + 双击一键启动
+
+**适用场景**：同事需要把系统装在自己的电脑上带出差、断网或独立脱机使用。
+
+项目已内置针对 Apple Silicon macOS 的双击自启动脚本 [`start_mac.command`](file:///Users/mac/projects/python/CP/start_mac.command)。
+
+#### 1. 在当前电脑打包发布（排除虚拟环境与临时文件）
+在当前电脑的终端中执行以下命令，生成干净小巧的发布压缩包：
+```bash
+zip -r CP-Extractor-Mac.zip . \
+  -x "*.venv*" \
+  -x "*__pycache__*" \
+  -x "*.pytest_cache*" \
+  -x "*.git*" \
+  -x "output/*" \
+  -x "data/test_*.db"
+```
+
+#### 2. 发送给目标 M 芯片电脑并解压
+将 `CP-Extractor-Mac.zip` 通过微信、企业网盘或 U 盘拷至目标 Mac（例如解压到 `~/Desktop/CP-Extractor`）。
+
+#### 3. 目标电脑一键运行
+在目标 M 芯片电脑上：
+- 确保系统安装了 Python 3.10+（若无，在终端运行 `brew install python@3.12` 或前往 [Python 官网](https://www.python.org/downloads/macos/) 安装一次即可）；
+- 在访达（Finder）中直接 **双击 `start_mac.command`**：
+  - 脚本会自动检测 Python 环境；
+  - 自动创建专属独立的 `.venv` 虚拟环境并安装所需依赖；
+  - 自动补全 `.env` 配置文件；
+  - **自动拉起默认浏览器打开 `http://localhost:8000` 进入系统**。
+
+---
+
+### 🚀 方案三（研发/工程师首选）：Git 克隆快速部署
+
+如果目标 M 芯片 Mac 已安装 Git，仅需在终端执行以下命令：
+
+```bash
+# 1. 克隆最新代码仓库
+git clone https://github.com/jxtanchris/cp-extractor.git
+cd cp-extractor
+
+# 2. 赋予脚本执行权限并一键启动
+chmod +x start_mac.command
+./start_mac.command
+```
+脚本将全自动完成依赖安装、虚拟环境配置并拉起浏览器。
+
+---
+
+### 💡 M 芯片专属优化优势
+
+1. **零 C++ 扩展编译风险**：认证加密与 JWT 鉴权均基于纯 Python 原生标准库（`hashlib` + `hmac` + `secrets`），无需编译复杂的 C/C++ 原生扩展，在 Apple Silicon 上零报错开箱即用；
+2. **Apple Vision 原生神经引擎 OCR**：内置的 `scripts/vision_ocr.swift` 直接调用 macOS 原生系统级视觉框架，借助 M 芯片的统一内存与 Apple Neural Engine 硬件加速，**截图 OCR 在几十毫秒内完成**，无需额外安装庞大臃肿的第三方 OCR 软件；
+3. **开箱即用管理员**：部署到新电脑后，初始默认账号均为 `admin` / `admin`，登录后可直接在「⚙️ 规则与配置 ▾」中配置大模型 API Key。
+
+---
+
 ## 🧪 运行测试与基准验证
 
 ```bash
-# 运行全链路 43 项单元测试、契约测试与多租户安全隔离回归测试
+# 运行全链路 44 项单元测试、契约测试与多租户安全隔离回归测试
 pytest -v
 
 # 运行四大类标准基准测试并生成 Excel/JSON 样例至 output/ 目录
