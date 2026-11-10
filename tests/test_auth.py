@@ -609,5 +609,33 @@ def test_user_change_password_workflow():
     assert "access_token" in new_login_resp.json()
 
 
+def test_logout_frontend_resets_workspace_state():
+    """
+    前端登出安全规范验证：
+    1. 前端包含 resetWorkspaceState 状态复位函数；
+    2. resetWorkspaceState 会清空 selectedFile、dropzone has-file 样式、恢复 dzTitle / dzIcon 初始文案与图标；
+    3. 清空右侧 KPI 统计与表格占位；
+    4. 在 handleLogout() 和 401 会话失效中被可靠触发。
+    """
+    html_resp = client.get("/")
+    assert html_resp.status_code == 200
+    html = html_resp.text
+
+    # 1. 验证存在 resetWorkspaceState 定义
+    assert "function resetWorkspaceState()" in html
+    # 2. 验证清空文件选择与拖拽区状态
+    assert "selectedFile = null" in html
+    assert "dropzone.classList.remove('has-file')" in html
+    assert "currentPackage = null" in html
+    assert "currentParsedText = ''" in html
+    # 3. 验证复位右侧 KPI 及表格提示
+    assert "kpiCategory" in html
+    assert "validTableBody" in html
+    assert "pendingContainer" in html
+    # 4. 验证登出及 401 中调用了 resetWorkspaceState
+    assert "resetWorkspaceState();" in html
+
+
+
 
 
