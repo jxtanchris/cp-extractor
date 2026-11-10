@@ -632,6 +632,47 @@
       overflow: hidden;
       text-overflow: ellipsis;
     }
+
+    /* 用户认证弹窗与胶囊样式 */
+    .auth-tab-bar {
+      display: flex;
+      border-bottom: 2px solid var(--border);
+      gap: 12px;
+      margin-bottom: 16px;
+    }
+    .auth-tab {
+      padding: 8px 16px;
+      font-weight: 600;
+      font-size: 14px;
+      cursor: pointer;
+      color: var(--muted);
+      border-bottom: 2px solid transparent;
+      margin-bottom: -2px;
+    }
+    .auth-tab.active {
+      color: var(--primary);
+      border-bottom-color: var(--primary);
+    }
+    .auth-error-box {
+      display: none;
+      background: #fef2f2;
+      border: 1px solid #fecaca;
+      color: #b91c1c;
+      padding: 8px 12px;
+      border-radius: 6px;
+      font-size: 12px;
+      margin-bottom: 12px;
+    }
+    .admin-indicator {
+      display: inline-block;
+      font-size: 10px;
+      font-weight: 700;
+      background: #f59e0b;
+      color: #fff;
+      padding: 1px 5px;
+      border-radius: 3px;
+      margin-left: 4px;
+    }
   </style>
 </head>
 <body>
@@ -642,6 +683,14 @@
     <span class="tag" id="headerProviderTag">DeepSeek@Christan</span>
   </div>
   <div class="top-controls">
+    <div id="userHeaderBar" style="display:flex; align-items:center; gap:8px;">
+      <span id="userBadge" class="btn-top" style="display:none; background:rgba(255,255,255,0.2); cursor:default; border-color:rgba(255,255,255,0.4);">
+        <span id="userIcon">👤</span> <span id="userNameLabel">已登录</span>
+        <span id="userAdminTag" class="admin-indicator" style="display:none;">管理员</span>
+      </span>
+      <button id="authBtn" class="btn-top" style="background:#2563eb; border-color:#60a5fa; font-weight:600;" onclick="openAuthModal()">🔑 登录 / 注册</button>
+      <button id="logoutBtn" class="btn-top" style="display:none; background:rgba(239,68,68,0.25); border-color:rgba(239,68,68,0.4);" onclick="handleLogout()">🚪 退出</button>
+    </div>
     <button class="btn-top" id="topParsedTextBtn" style="background:#eff6ff; color:var(--primary); border-color:#bfdbfe; font-weight:600;" onclick="openParsedTextModal()">
       👁️ 查看 PDF/文档解析原文本
     </button>
@@ -853,6 +902,57 @@
   </div>
 </div>
 
+<!-- 工程师登录 / 注册模态框 -->
+<div class="modal-backdrop" id="authModal" style="display:none; z-index:9999;">
+  <div class="modal" style="width:420px; max-width:92vw;">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+      <h3 style="margin:0; font-size:16px;" id="authModalTitle">🔑 登录工程师工作台</h3>
+      <button class="btn-sm" style="background:#f1f5f9;" onclick="closeAuthModal()">✖ 关闭</button>
+    </div>
+
+    <!-- 切换 Tab -->
+    <div class="auth-tab-bar">
+      <div class="auth-tab active" id="tabAuthLogin" onclick="switchAuthTab('login')">用户登录</div>
+      <div class="auth-tab" id="tabAuthRegister" onclick="switchAuthTab('register')">新用户注册</div>
+    </div>
+
+    <div class="auth-error-box" id="authErrorBox"></div>
+
+    <!-- 登录表单 -->
+    <div id="authLoginForm" class="auth-form">
+      <div class="field" style="margin-bottom:12px;">
+        <label>用户名 (Username)</label>
+        <input type="text" id="authLoginUsername" class="form-control" placeholder="请输入用户名" onkeydown="if(event.key==='Enter') doLogin()" />
+      </div>
+      <div class="field" style="margin-bottom:14px;">
+        <label>密码 (Password)</label>
+        <input type="password" id="authLoginPassword" class="form-control" placeholder="请输入登录密码" onkeydown="if(event.key==='Enter') doLogin()" />
+      </div>
+      <div style="font-size:11.5px; color:var(--muted); background:#f8fafc; border:1px solid #e2e8f0; padding:8px 10px; border-radius:6px; margin-bottom:16px;">
+        💡 提示：系统管理员初始账号密码为 <code>admin</code> / <code>admin</code>，普通工程师账号可直接在右侧 Tab 注册。
+      </div>
+      <button type="button" class="btn-primary" id="loginSubmitBtn" onclick="doLogin()">立即登录</button>
+    </div>
+
+    <!-- 注册表单 -->
+    <div id="authRegForm" class="auth-form" style="display:none;">
+      <div class="field" style="margin-bottom:12px;">
+        <label>用户名 (登录账号)</label>
+        <input type="text" id="authRegUsername" class="form-control" placeholder="英文字母、数字或下划线" onkeydown="if(event.key==='Enter') doRegister()" />
+      </div>
+      <div class="field" style="margin-bottom:12px;">
+        <label>姓名 / 部门 (选填)</label>
+        <input type="text" id="authRegDisplayName" class="form-control" placeholder="例如：张工 (质量部)" onkeydown="if(event.key==='Enter') doRegister()" />
+      </div>
+      <div class="field" style="margin-bottom:16px;">
+        <label>设置密码</label>
+        <input type="password" id="authRegPassword" class="form-control" placeholder="至少 4 位字符" onkeydown="if(event.key==='Enter') doRegister()" />
+      </div>
+      <button type="button" class="btn-primary" id="regSubmitBtn" onclick="doRegister()">注册并自动登录</button>
+    </div>
+  </div>
+</div>
+
 <!-- 多后端大模型切换与 API 配置弹窗 -->
 <div class="modal-backdrop" id="dsModal">
   <div class="modal" style="width:640px; max-width:95vw;">
@@ -861,7 +961,7 @@
       <button class="btn-sm" style="background:#f1f5f9;" onclick="closeModal()">✖ 关闭</button>
     </div>
     <p style="font-size:12px; color:var(--muted); margin-bottom:10px;">
-      支持一键切换主流云端大模型与本地私有化模型。各厂商配置独立记忆，并可同步写入服务端 <code>.env</code> 文件。
+      支持一键切换主流云端大模型与本地私有化模型。大模型 API Key 统一由服务端托管，仅系统管理员可修改写入 <code>.env</code>。
     </p>
 
     <div class="field">
@@ -869,9 +969,15 @@
       <div class="provider-grid" id="providerGrid"></div>
     </div>
 
-    <div class="field">
-      <label><span id="apiKeyLabelText">API Key</span> <span id="envKeyHint" style="color:var(--success); font-weight:normal;"></span></label>
+    <div class="field" id="adminApiKeySection">
+      <div style="display:flex; justify-content:space-between; align-items:center;">
+        <label><span id="apiKeyLabelText">API Key</span> <span id="envKeyHint" style="color:var(--success); font-weight:normal;"></span></label>
+        <span class="admin-indicator" id="adminKeyOnlyBadge" style="display:none;">仅管理员可配置</span>
+      </div>
       <input type="password" id="dsApiKey" class="form-control" placeholder="sk-..." />
+      <div id="normalUserKeyNotice" style="display:none; font-size:12px; color:var(--muted); background:#f8fafc; border:1px solid #e2e8f0; padding:8px 10px; border-radius:6px; margin-top:4px;">
+        🔒 服务端大模型 API Key 统一由系统管理员在 <code>.env</code> 中配置维护。普通用户无需且禁止自行配置个人 Key。
+      </div>
     </div>
 
     <div class="field">
@@ -907,10 +1013,10 @@
 
     <div id="llmTestResultBox" style="display:none; padding:8px 12px; border-radius:6px; font-size:12px; margin-top:8px;"></div>
 
-    <div style="display:flex; align-items:center; justify-content:space-between; margin-top:12px; padding-top:10px; border-top:1px solid var(--border);">
+    <div id="adminSyncEnvRow" style="display:flex; align-items:center; justify-content:space-between; margin-top:12px; padding-top:10px; border-top:1px solid var(--border);">
       <label style="display:flex; align-items:center; gap:6px; font-size:12px; color:#334155; cursor:pointer;">
         <input type="checkbox" id="syncToEnvCheck" checked />
-        保存时同步写入服务端 <code>.env</code> 配置文件
+        保存时同步写入服务端 <code>.env</code> 配置文件（管理员专享）
       </label>
       <button type="button" class="btn-sm" style="background:#fef2f2; color:#dc2626;" onclick="clearLocalDsKey()">清除当前厂商浏览器缓存</button>
     </div>
@@ -921,7 +1027,7 @@
       </button>
       <div style="display:flex; gap:8px;">
         <button type="button" class="btn-sm" style="background:#f1f5f9;" onclick="closeModal()">取消</button>
-        <button type="button" class="btn-primary" style="width:auto; padding:7px 18px; font-size:13px;" onclick="saveDsConfig()">💾 保存并切换模型</button>
+        <button type="button" class="btn-primary" id="saveDsConfigBtn" style="width:auto; padding:7px 18px; font-size:13px;" onclick="saveDsConfig()">💾 保存并切换模型</button>
       </div>
     </div>
   </div>
@@ -1198,6 +1304,250 @@
 <script>
   let currentMode = 'full'; // 'full' | 'char_list'
 
+  // ================= 工程师鉴权与多租户用户会话 =================
+  let currentUser = null;
+  let authToken = localStorage.getItem('cp_auth_token') || '';
+
+  function appendTokenToUrl(url) {
+    if (!url || !authToken) return url;
+    const [pathWithQuery, hash] = url.split('#');
+    const sep = pathWithQuery.includes('?') ? '&' : '?';
+    const authedUrl = `${pathWithQuery}${sep}token=${encodeURIComponent(authToken)}`;
+    return hash ? `${authedUrl}#${hash}` : authedUrl;
+  }
+
+  async function fetchWithAuth(url, options = {}) {
+    options.headers = options.headers || {};
+    if (authToken) {
+      if (options.headers instanceof Headers) {
+        options.headers.set('Authorization', `Bearer ${authToken}`);
+      } else {
+        options.headers['Authorization'] = `Bearer ${authToken}`;
+      }
+    }
+    const resp = await fetch(url, options);
+    if (resp.status === 401) {
+      localStorage.removeItem('cp_auth_token');
+      localStorage.removeItem('cp_auth_user');
+      authToken = '';
+      currentUser = null;
+      updateAuthUI();
+      openAuthModal();
+      showAuthError('使用此功能需先登录！初始管理员账号为 admin / admin');
+    }
+    return resp;
+  }
+
+  function updateAuthUI() {
+    const userBadge = document.getElementById('userBadge');
+    const authBtn = document.getElementById('authBtn');
+    const logoutBtn = document.getElementById('logoutBtn');
+    const userNameLabel = document.getElementById('userNameLabel');
+    const userAdminTag = document.getElementById('userAdminTag');
+    const normalUserKeyNotice = document.getElementById('normalUserKeyNotice');
+    const adminKeyOnlyBadge = document.getElementById('adminKeyOnlyBadge');
+    const adminSyncEnvRow = document.getElementById('adminSyncEnvRow');
+    const dsApiKeyInput = document.getElementById('dsApiKey');
+
+    if (currentUser && authToken) {
+      userBadge.style.display = 'inline-flex';
+      userNameLabel.textContent = currentUser.display_name || currentUser.username;
+      userAdminTag.style.display = currentUser.is_admin ? 'inline-block' : 'none';
+      authBtn.style.display = 'none';
+      logoutBtn.style.display = 'inline-block';
+
+      if (currentUser.is_admin) {
+        if (adminKeyOnlyBadge) adminKeyOnlyBadge.style.display = 'inline-block';
+        if (normalUserKeyNotice) normalUserKeyNotice.style.display = 'none';
+        if (adminSyncEnvRow) adminSyncEnvRow.style.display = 'flex';
+        if (dsApiKeyInput) {
+          dsApiKeyInput.style.display = 'block';
+          dsApiKeyInput.disabled = false;
+        }
+      } else {
+        if (adminKeyOnlyBadge) adminKeyOnlyBadge.style.display = 'none';
+        if (normalUserKeyNotice) normalUserKeyNotice.style.display = 'block';
+        if (adminSyncEnvRow) adminSyncEnvRow.style.display = 'none';
+        if (dsApiKeyInput) {
+          dsApiKeyInput.style.display = 'none';
+          dsApiKeyInput.disabled = true;
+        }
+      }
+    } else {
+      userBadge.style.display = 'none';
+      authBtn.style.display = 'inline-block';
+      logoutBtn.style.display = 'none';
+      if (adminKeyOnlyBadge) adminKeyOnlyBadge.style.display = 'none';
+      if (normalUserKeyNotice) normalUserKeyNotice.style.display = 'block';
+      if (adminSyncEnvRow) adminSyncEnvRow.style.display = 'none';
+      if (dsApiKeyInput) {
+        dsApiKeyInput.style.display = 'none';
+        dsApiKeyInput.disabled = true;
+      }
+    }
+  }
+
+  function openAuthModal() {
+    document.getElementById('authModal').style.display = 'flex';
+    document.getElementById('authErrorBox').style.display = 'none';
+  }
+
+  function closeAuthModal() {
+    document.getElementById('authModal').style.display = 'none';
+  }
+
+  function switchAuthTab(tab) {
+    const tabLogin = document.getElementById('tabAuthLogin');
+    const tabReg = document.getElementById('tabAuthRegister');
+    const formLogin = document.getElementById('authLoginForm');
+    const formReg = document.getElementById('authRegForm');
+    const title = document.getElementById('authModalTitle');
+
+    document.getElementById('authErrorBox').style.display = 'none';
+    if (tab === 'login') {
+      tabLogin.classList.add('active');
+      tabReg.classList.remove('active');
+      formLogin.style.display = 'block';
+      formReg.style.display = 'none';
+      title.textContent = '🔑 登录工程师工作台';
+    } else {
+      tabLogin.classList.remove('active');
+      tabReg.classList.add('active');
+      formLogin.style.display = 'none';
+      formReg.style.display = 'block';
+      title.textContent = '📝 注册新工程师账号';
+    }
+  }
+
+  function showAuthError(msg) {
+    const box = document.getElementById('authErrorBox');
+    box.textContent = msg;
+    box.style.display = 'block';
+  }
+
+  async function doLogin() {
+    const u = document.getElementById('authLoginUsername').value.trim();
+    const p = document.getElementById('authLoginPassword').value;
+    if (!u || !p) {
+      showAuthError('请输入用户名和密码！');
+      return;
+    }
+    const btn = document.getElementById('loginSubmitBtn');
+    btn.disabled = true;
+    btn.textContent = '正在登录...';
+    try {
+      const resp = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: u, password: p }),
+      });
+      const data = await resp.json();
+      if (!resp.ok) {
+        showAuthError(data.detail || '登录失败，请检查账号密码');
+        return;
+      }
+      authToken = data.access_token;
+      currentUser = data.user;
+      localStorage.setItem('cp_auth_token', authToken);
+      localStorage.setItem('cp_auth_user', JSON.stringify(currentUser));
+      updateAuthUI();
+      closeAuthModal();
+      refreshLearningBadge();
+      loadTemplateList();
+    } catch (e) {
+      showAuthError('网络或服务异常: ' + e);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = '立即登录';
+    }
+  }
+
+  async function doRegister() {
+    const u = document.getElementById('authRegUsername').value.trim();
+    const p = document.getElementById('authRegPassword').value;
+    const name = document.getElementById('authRegDisplayName').value.trim();
+    if (!u || !p) {
+      showAuthError('请填写用户名与密码！');
+      return;
+    }
+    if (p.length < 4) {
+      showAuthError('密码长度不能少于 4 位！');
+      return;
+    }
+    const btn = document.getElementById('regSubmitBtn');
+    btn.disabled = true;
+    btn.textContent = '正在注册...';
+    try {
+      const resp = await fetch('/api/auth/register', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: u, password: p, display_name: name || undefined }),
+      });
+      const data = await resp.json();
+      if (!resp.ok) {
+        showAuthError(data.detail || '注册失败');
+        return;
+      }
+      authToken = data.access_token;
+      currentUser = data.user;
+      localStorage.setItem('cp_auth_token', authToken);
+      localStorage.setItem('cp_auth_user', JSON.stringify(currentUser));
+      updateAuthUI();
+      closeAuthModal();
+      refreshLearningBadge();
+      loadTemplateList();
+      alert(`注册成功！欢迎您，${currentUser.display_name || currentUser.username}`);
+    } catch (e) {
+      showAuthError('网络或服务异常: ' + e);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = '注册并自动登录';
+    }
+  }
+
+  async function handleLogout() {
+    if (!confirm('确定要退出登录吗？')) return;
+    try {
+      if (authToken) {
+        await fetchWithAuth('/api/auth/logout', { method: 'POST' });
+      }
+    } catch (e) {}
+    authToken = '';
+    currentUser = null;
+    localStorage.removeItem('cp_auth_token');
+    localStorage.removeItem('cp_auth_user');
+    updateAuthUI();
+    loadTemplateList();
+    refreshLearningBadge();
+  }
+
+  async function checkAuthSession() {
+    if (!authToken) {
+      updateAuthUI();
+      return;
+    }
+    try {
+      const resp = await fetch('/api/auth/me', {
+        headers: { 'Authorization': `Bearer ${authToken}` }
+      });
+      if (resp.ok) {
+        currentUser = await resp.json();
+        localStorage.setItem('cp_auth_user', JSON.stringify(currentUser));
+      } else {
+        authToken = '';
+        currentUser = null;
+        localStorage.removeItem('cp_auth_token');
+        localStorage.removeItem('cp_auth_user');
+      }
+    } catch (e) {
+      const cached = localStorage.getItem('cp_auth_user');
+      if (cached) {
+        try { currentUser = JSON.parse(cached); } catch(ex) {}
+      }
+    }
+    updateAuthUI();
+  }
+
   function switchMode(mode) {
     currentMode = mode;
     const btnFull = document.getElementById('modeBtnFull');
@@ -1287,6 +1637,7 @@
   }
 
   async function initApp() {
+    await checkAuthSession();
     loadLocalProviderConfigs();
 
     const cfgResp = await fetch('/api/config');
@@ -1465,6 +1816,11 @@
   }
 
   async function setFile(file) {
+    if (!currentUser || !authToken) {
+      openAuthModal();
+      showAuthError('上传文档前请先登录系统！');
+      return;
+    }
     selectedFile = file;
     const dz = document.getElementById('dropzone');
     dz.classList.add('has-file');
@@ -1493,7 +1849,7 @@
     try {
       const fd = new FormData();
       fd.append('file', file);
-      const res = await fetch('/api/upload', { method: 'POST', body: fd });
+      const res = await fetchWithAuth('/api/upload', { method: 'POST', body: fd });
       if (res.ok) {
         const d = await res.json();
         currentParsedText = d.content || '';
@@ -1546,6 +1902,11 @@
   }
 
   async function startExtraction() {
+    if (!currentUser || !authToken) {
+      openAuthModal();
+      showAuthError('使用提取功能前请先登录系统！');
+      return;
+    }
     if (!selectedFile) {
       alert('请先在第一步上传 PDF / Word / Markdown 标准文档或粘贴截图！');
       return;
@@ -1553,15 +1914,8 @@
 
     snapshotCurrentFormToProviderConfig();
     const meta = getProviderMeta(activeProviderKey);
-    const localKey = (document.getElementById('dsApiKey').value || '').trim();
     const curBaseUrl = document.getElementById('dsBaseUrl').value.trim() || meta.base_url;
     const curModel = document.getElementById('dsModel').value.trim() || meta.default_model;
-
-    if (meta.requires_key && !localKey && !meta.has_env_key) {
-      openModal();
-      alert(`请先填入 ${meta.name} 的 API Key！`);
-      return;
-    }
 
     const btn = document.getElementById('extractBtn');
     const msg = document.getElementById('statusMsg');
@@ -1575,17 +1929,13 @@
       formData.append('category', selectedCategory);
       formData.append('mode', currentMode);
       formData.append('llm_provider', activeProviderKey);
-      if (localKey) {
-        formData.append('llm_api_key', localKey);
-        formData.append('deepseek_api_key', localKey);
-      }
       formData.append('llm_base_url', curBaseUrl);
       formData.append('llm_model', curModel);
       formData.append('llm_temperature', String(providerConfigs[activeProviderKey]?.temperature ?? 0.0));
       formData.append('deepseek_base_url', curBaseUrl);
       formData.append('deepseek_model', curModel);
 
-      const resp = await fetch('/api/extract-document', {
+      const resp = await fetchWithAuth('/api/extract-document', {
         method: 'POST',
         body: formData
       });
@@ -1648,11 +1998,13 @@
     }
 
     if (srcUrl && isPdf) {
-      const href = `${encodeURI(srcUrl)}#page=${pageNum}`;
+      const authedSrc = appendTokenToUrl(encodeURI(srcUrl));
+      const href = `${authedSrc}#page=${pageNum}`;
       const pageLabel = item.source_page ? `<span class="clause-page-tag">(P.${item.source_page})</span>` : '';
       return `<a class="clause-link" href="${href}" target="_blank" title="点击在新标签页打开 PDF 第 ${pageNum} 页">📄 ${clauseText} ${pageLabel} ↗</a>`;
     } else if (srcUrl) {
-      return `<a class="clause-link" href="${encodeURI(srcUrl)}" target="_blank" title="点击打开源标准文件">📄 ${clauseText} ↗</a>`;
+      const href = appendTokenToUrl(encodeURI(srcUrl));
+      return `<a class="clause-link" href="${href}" target="_blank" title="点击打开源标准文件">📄 ${clauseText} ↗</a>`;
     }
     return item.source_page ? `${clauseText} <span style="color:var(--muted); font-size:11px;">(P.${item.source_page})</span>` : clauseText;
   }
@@ -1670,11 +2022,13 @@
     }
 
     if (srcUrl && isPdf) {
-      const href = `${encodeURI(srcUrl)}#page=${pageNum}`;
+      const authedSrc = appendTokenToUrl(encodeURI(srcUrl));
+      const href = `${authedSrc}#page=${pageNum}`;
       const pageLabel = item.source_page ? `<span class="clause-page-tag">(P.${item.source_page})</span>` : '';
       return `<a class="clause-link" href="${href}" target="_blank" title="点击在新标签页打开 PDF 第 ${pageNum} 页">📄 ${clauseText} ${pageLabel} ↗</a>`;
     } else if (srcUrl) {
-      return `<a class="clause-link" href="${encodeURI(srcUrl)}" target="_blank" title="点击打开源标准文件">📄 ${clauseText} ↗</a>`;
+      const href = appendTokenToUrl(encodeURI(srcUrl));
+      return `<a class="clause-link" href="${href}" target="_blank" title="点击打开源标准文件">📄 ${clauseText} ↗</a>`;
     }
     return item.source_page ? `${clauseText} <span style="color:var(--muted); font-size:11px;">(P.${item.source_page})</span>` : clauseText;
   }
@@ -1694,10 +2048,12 @@
     document.getElementById('tabCountValid').textContent = validCount;
     document.getElementById('tabCountPending').textContent = pkg.pending_review_items.length;
 
+    const authedExcel = appendTokenToUrl(excelUrl);
+    const authedJson = appendTokenToUrl(jsonUrl);
     const dlLabel = isCharList ? '📥 导出特性清单 Excel (.xlsx)' : '📥 导出控制计划 Excel (.xlsx)';
     document.getElementById('exportBar').innerHTML = `
-      <a class="btn-dl" href="${excelUrl}" download>${dlLabel}</a>
-      <a class="btn-dl secondary" href="${jsonUrl}" download>📥 导出 JSON</a>
+      <a class="btn-dl" href="${authedExcel}" download>${dlLabel}</a>
+      <a class="btn-dl secondary" href="${authedJson}" download>📥 导出 JSON</a>
     `;
 
     const tableWrap = document.getElementById('viewValid');
@@ -1922,7 +2278,7 @@
       }
     }
 
-    const resp = await fetch('/api/approve-review', {
+    const resp = await fetchWithAuth('/api/approve-review', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -2071,15 +2427,14 @@
     snapshotCurrentFormToProviderConfig();
     const cfg = providerConfigs[activeProviderKey] || {};
     // 同步维护旧版缓存键
-    localStorage.setItem('ds_api_key', cfg.api_key || '');
     localStorage.setItem('ds_base_url', cfg.base_url || '');
     localStorage.setItem('ds_model', cfg.model || '');
     saveLocalProviderConfigs();
 
     const syncEnv = document.getElementById('syncToEnvCheck')?.checked;
-    if (syncEnv) {
+    if (syncEnv && currentUser && currentUser.is_admin) {
       try {
-        const resp = await fetch('/api/llm/save-env', {
+        const resp = await fetchWithAuth('/api/llm/save-env', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -2096,10 +2451,16 @@
             allLlmProviders = data.config.providers;
             serverHasEnvKey = data.config.has_env_key;
           }
+          alert('管理员专属设置已同步写入服务端 .env 环境变量！');
+        } else {
+          const err = await resp.json();
+          alert('写入服务端失败: ' + (err.detail || '权限不足'));
         }
       } catch (e) {
         console.warn('同步 .env 失败:', e);
       }
+    } else if (syncEnv && (!currentUser || !currentUser.is_admin)) {
+      alert('普通用户无权修改服务端全局 API Key，已在前端临时应用模型选择。');
     }
 
     renderProviderGrid();
@@ -2141,7 +2502,7 @@
   }
 
   async function loadTemplatesFromServer(selectKey) {
-    const resp = await fetch('/api/templates');
+    const resp = await fetchWithAuth('/api/templates');
     if (!resp.ok) {
       alert('加载提示词模板失败');
       return;
@@ -2160,7 +2521,9 @@
       <button type="button" class="tpl-nav-item ${t.key === activeTemplateKey ? 'active' : ''}" onclick="selectTemplateTab('${t.key}')">
         <div class="tpl-nav-title">
           <span>${escapeHtml(t.title)}</span>
-          ${t.is_modified ? '<span class="badge badge-low" style="font-size:10px; padding:1px 5px;">已修改</span>' : ''}
+          ${t.is_user_custom 
+            ? '<span class="badge" style="font-size:10px; padding:1px 5px; background:#fef3c7; color:#b45309; border:1px solid #fde68a;">个人定制</span>' 
+            : '<span class="badge" style="font-size:10px; padding:1px 5px; background:#f1f5f9; color:#64748b;">系统默认</span>'}
         </div>
         <div class="tpl-nav-path">${escapeHtml(t.rel_path)}</div>
       </button>
@@ -2174,7 +2537,18 @@
     renderTemplateSidebar();
     document.getElementById('tplEditorTitle').textContent = tpl.title;
     document.getElementById('tplEditorDesc').textContent = tpl.description;
-    document.getElementById('tplFileBadge').textContent = tpl.rel_path;
+    const badge = document.getElementById('tplFileBadge');
+    if (tpl.is_user_custom) {
+      badge.style.background = '#fef3c7';
+      badge.style.color = '#b45309';
+      badge.style.border = '1px solid #fde68a';
+      badge.textContent = `👤 个人专属定制版 (覆盖 ${tpl.rel_path})`;
+    } else {
+      badge.style.background = '#f1f5f9';
+      badge.style.color = '#475569';
+      badge.style.border = 'none';
+      badge.textContent = `📦 系统出厂默认 (${tpl.rel_path})`;
+    }
     document.getElementById('tplTextarea').value = tpl.content;
     document.getElementById('tplSaveStatus').textContent = '';
     updateAssembledPreview();
@@ -2202,7 +2576,7 @@
     statusEl.style.color = 'var(--muted)';
     statusEl.textContent = '正在保存...';
 
-    const resp = await fetch(`/api/templates/${activeTemplateKey}`, {
+    const resp = await fetchWithAuth(`/api/templates/${activeTemplateKey}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ content })
@@ -2217,17 +2591,19 @@
     const idx = allTemplates.findIndex(t => t.key === activeTemplateKey);
     if (idx !== -1) {
       allTemplates[idx].content = data.content;
+      allTemplates[idx].is_user_custom = data.is_user_custom;
       allTemplates[idx].is_modified = data.is_modified;
     }
     renderTemplateSidebar();
+    selectTemplateTab(activeTemplateKey);
     updateAssembledPreview();
     statusEl.style.color = 'var(--success)';
-    statusEl.textContent = `✅ 已保存至 ${data.rel_path}，下次提取立即生效！`;
+    statusEl.textContent = '✅ 已保存为您的专属提示词，下次提取立即生效！';
   }
 
   async function resetCurrentTemplate() {
     if (!confirm('确定要将当前模板恢复为系统出厂默认提示词吗？')) return;
-    const resp = await fetch(`/api/templates/${activeTemplateKey}/reset`, {
+    const resp = await fetchWithAuth(`/api/templates/${activeTemplateKey}/reset`, {
       method: 'POST'
     });
     const data = await resp.json();
@@ -2238,6 +2614,7 @@
     const idx = allTemplates.findIndex(t => t.key === activeTemplateKey);
     if (idx !== -1) {
       allTemplates[idx].content = data.content;
+      allTemplates[idx].is_user_custom = data.is_user_custom;
       allTemplates[idx].is_modified = data.is_modified;
     }
     selectTemplateTab(activeTemplateKey);
@@ -2587,7 +2964,7 @@
   // ==================== 人工复核自学习规则中心逻辑 ====================
   async function refreshLearningBadge() {
     try {
-      const resp = await fetch('/api/learning/rules');
+      const resp = await fetchWithAuth('/api/learning/rules');
       if (resp.ok) {
         const data = await resp.json();
         const badge = document.getElementById('topLearnedCount');
@@ -2607,7 +2984,7 @@
   }
 
   async function loadLearningRules() {
-    const resp = await fetch('/api/learning/rules');
+    const resp = await fetchWithAuth('/api/learning/rules');
     if (!resp.ok) return;
     const data = await resp.json();
     renderLearningPayload(data);
@@ -2705,7 +3082,7 @@
 
   async function updateLearningThreshold() {
     const val = parseInt(document.getElementById('learningThresholdSelect').value, 10) || 3;
-    const resp = await fetch('/api/learning/settings', {
+    const resp = await fetchWithAuth('/api/learning/settings', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ threshold: val })
@@ -2732,7 +3109,7 @@
     if (ctrlEl) payload.learned_control_method = ctrlEl.value;
     if (reactEl) payload.learned_reaction_plan = reactEl.value;
 
-    const resp = await fetch(`/api/learning/rules/${ruleId}`, {
+    const resp = await fetchWithAuth(`/api/learning/rules/${ruleId}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload)
@@ -2751,7 +3128,7 @@
     const freqEl = document.getElementById(`learnSampleFreq_${ruleId}`);
     const ctrlEl = document.getElementById(`learnCtrlMethod_${ruleId}`);
     const reactEl = document.getElementById(`learnReactionPlan_${ruleId}`);
-    const resp = await fetch(`/api/learning/rules/${ruleId}`, {
+    const resp = await fetchWithAuth(`/api/learning/rules/${ruleId}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -2772,7 +3149,7 @@
 
   async function deleteLearnedRule(ruleId, name) {
     if (!confirm(`确定要删除「${name}」的自学习规则及累计计数吗？`)) return;
-    const resp = await fetch(`/api/learning/rules/${ruleId}`, { method: 'DELETE' });
+    const resp = await fetchWithAuth(`/api/learning/rules/${ruleId}`, { method: 'DELETE' });
     if (resp.ok) {
       const data = await resp.json();
       renderLearningPayload(data.learning);
@@ -2782,7 +3159,7 @@
 
   async function resetAllLearnedRules() {
     if (!confirm('确定要清空全部自学习规则与历史累计计数吗？')) return;
-    const resp = await fetch('/api/learning/reset', { method: 'POST' });
+    const resp = await fetchWithAuth('/api/learning/reset', { method: 'POST' });
     if (resp.ok) {
       const data = await resp.json();
       renderLearningPayload(data);

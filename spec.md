@@ -37,6 +37,9 @@
 | 后处理校验与自纠错 | 结合确定性规则门禁（`QualityGateValidator`）与二次语义打回重提（`refine_items_with_feedback`）的双层校验机制 |
 | 人工确认门禁 | 低置信度、参考尺寸、原文未完全匹配或方法判据混淆项必须进入 `pending_review_items`，经人工复核后才能准入控制计划 |
 | 校验词库 (`LexiconDB`) | 存储于 `data/lexicon.db` 的 SQLite 多语言（中/英/日/德/符号）量检具、物理单位与合格判据特征词库 |
+| 用户认证与权限体系 (`AuthManager`) | 基于 SQLite (`data/app.db`)、PBKDF2-HMAC-SHA256 盐值密码散列与 RFC 7519 HS256 JWT Token 签发的工程师鉴权与管理员特权保护架构 |
+| 提示词两级继承架构 | 用户个性化定制模板优先存储于 `user_templates` 表，未定制时自动回退至磁盘 `templates/` 系统默认模板（零污染官方文件并支持单键恢复出厂） |
+| 文件存储沙箱与 IDOR 防护 | 用户上传的源文档与导出的产物物理隔离于 `output/users/{user_id}/` 目录，通过 Header 与 `?token=` 双通道鉴权，阻断跨用户水平越权访问与路径穿越攻击 |
 
 ---
 
@@ -80,6 +83,8 @@ Web 工作台人工审核（支持条款号一键跳转 PDF 对应页码 #page=N
 | 自学习规则引擎 | `src/cp_extractor/core/feedback_learner.py` | 基于 SQLite (`learned_rules` 表) 观察记录工程师手工准入/驳回决策，采用严格核心名称匹配，累计达阈值 $N$ 次后自动更改软门禁直通规则、回填 IATF 16949 扩展字段、动态注入提示词并扩充词库 |
 | 多语言校验词库 | `src/cp_extractor/core/lexicon_db.py` | 基于 SQLite (`data/lexicon.db`) 管理中/英/日/德多语种量检具（`method`）、单位（`unit`）、判据（`criteria`）词条 |
 | 输出映射导出器 | `src/cp_extractor/core/mapper.py` | 将审核后数据导出为 15 列 IATF 16949 控制计划 Excel（`.xlsx`），自动补全完整 HTTP 基地址并写入条款 `#page=N` 蓝色超链接与多工作表报告 |
+| 用户认证与鉴权核心 | `src/cp_extractor/schemas/auth.py`, `src/cp_extractor/core/auth.py` | 提供 PBKDF2-HMAC-SHA256 密码加盐散列、HS256 JWT Token 签发与解析校验、默认开箱管理员 `admin/admin`、非管理员 403 权限拦截与 401 强制登录保护 |
+| 存储沙箱与多租户隔离 | `src/cp_extractor/api/app.py` | 实现 `output/users/{user_id}/` 沙箱隔离存储、Path Traversal 路径穿越防护、IDOR 水平越权拦截、Header + URL `?token=` 双通道下载/预览支持与自学习经验按用户隔离 |
 | Web 服务与工作台 | `src/cp_extractor/api/app.py` | 提供 REST API、源 PDF 在线预览、人工确认门禁复核、提示词配置中心与词库管理界面 |
 
 ---
@@ -263,7 +268,8 @@ Web 工作台人工审核（支持条款号一键跳转 PDF 对应页码 #page=N
 | `v1.2` | 2026-11-06 | 归档 | 1. `CheckItem` 新增 `source_page`，`StandardInfo` 新增 `source_file_url`，支持 Web 与 Excel 条款 `#page=N` 超链接跳转；<br>2. 新增 SQLite 多语言词库 (`LexiconDB`) 与剪贴板截图 Vision OCR 解析；<br>3. 建立 `tests/test_spec_consistency.py` 自动化契约测试，实现 `spec.md` 与代码库双向绑定 |
 | `v1.3` | 2026-11-06 | 归档 | 新增多后端大模型一键切换架构（`LLMClient` / `LLM_PROVIDERS`），内置支持 `deepseek`（DeepSeek）、`qwen`（通义千问）、`zhipu`（智谱 GLM）、`kimi`（月之暗面）、`siliconflow`（硅基流动）、`openai`（OpenAI）、`ollama`（本地私有化免 Key）及 `custom`（自定义接口），支持按厂商独立保存配置、采样温度 (`temperature`) 自适应调节、在线连通性测试与一键同步写入服务端 `.env` |
 | `v1.4` | 2026-11-06 | 归档 | 新增人工复核反馈自学习引擎（`FeedbackRuleLearner`，`src/cp_extractor/core/feedback_learner.py`）：自动观察工程师在待确认项上的手工准入/驳回操作，累计达到可配置阈值 $N$ 次后，自动生成门禁直通/剔除规则、自动回填检查方法与判据、动态注入提示词并扩充 SQLite 量检具词库 |
-| `v2.0` | 2026-11-06 | 已生效 | 1. **Schema 升级至 15 字段 IATF 16949 完整契约**：`CheckItem` 新增 `special_char_class`（特殊特性分类）、`sample_size_frequency`（样本容量/抽样频次）、`control_method`（控制方法）、`reaction_plan`（反应计划）4 个可选字段，严守“零编造”提取准则并与 `FeedbackRuleLearner` 自学习记忆回填联动；<br>2. **复合标准章节块级动态路由 (`classify_chunk_plugins`)**：支持按章节分块独立识别标准类别与单块多插件融合注入；<br>3. **自学习安全边界加固**：确立“硬门禁绝对优先（原文失配/公差篡改/方法混淆不可绕过）”、“严格核心名称匹配（移除宽泛子串匹配）”与“高置信度强制条款防误删保护”；<br>4. **二次自纠错范围隔离与零丢失兜底 (`_reconcile_refined_items`)**：仅送修硬错误项，保留软门禁待审项，并对送修项逐一对账防漏；<br>5. **Excel 超链接完整 HTTP 基地址补全 (`resolve_full_hyperlink_url`)**：支持本地 Office/WPS 直接点击唤起浏览器跳转 PDF 页码 |
+| `v2.0` | 2026-11-06 | 归档 | 1. **Schema 升级至 15 字段 IATF 16949 完整契约**：`CheckItem` 新增 `special_char_class`（特殊特性分类）、`sample_size_frequency`（样本容量/抽样频次）、`control_method`（控制方法）、`reaction_plan`（反应计划）4 个可选字段，严守“零编造”提取准则并与 `FeedbackRuleLearner` 自学习记忆回填联动；<br>2. **复合标准章节块级动态路由 (`classify_chunk_plugins`)**：支持按章节分块独立识别标准类别与单块多插件融合注入；<br>3. **自学习安全边界加固**：确立“硬门禁绝对优先（原文失配/公差篡改/方法混淆不可绕过）”、“严格核心名称匹配（移除宽泛子串匹配）”与“高置信度强制条款防误删保护”；<br>4. **二次自纠错范围隔离与零丢失兜底 (`_reconcile_refined_items`)**：仅送修硬错误项，保留软门禁待审项，并对送修项逐一对账防漏；<br>5. **Excel 超链接完整 HTTP 基地址补全 (`resolve_full_hyperlink_url`)**：支持本地 Office/WPS 直接点击唤起浏览器跳转 PDF 页码 |
+| `v2.1` | 2026-11-10 | 已生效 | 1. **用户认证与鉴权核心**：引入 PBKDF2 加盐散列与 JWT HS256 Token 鉴权，上传与提取接口强制要求登录；内置开箱即用默认管理员 `admin/admin`；<br>2. **全局 API Key 集中管控**：严禁客户端普通用户自行配置大模型 API Key，统一走服务端 `.env`；保护 `/api/llm/save-env` 接口，仅系统管理员允许修改；<br>3. **提示词两级继承架构**：创建 `user_templates` 表，优先加载当前用户定制提示词，未定制回退至系统官方 Markdown 模板，支持单键恢复出厂默认；<br>4. **存储沙箱隔离与防越权 (IDOR) 保护**：用户文件物理隔离于 `output/users/{user_id}/`，严格防护 Path Traversal 与水平越权访问；支持 Header 与 URL `?token=` 双通道下载/预览；<br>5. **自学习规则多租户经验隔离**：`FeedbackRuleLearner` 按 `user_id` 物理隔离学习记忆，不同工程师人工决策互不干扰；<br>6. **Web 工作台 UI 改造**：首页增加登录/注册模态框、Header 用户状态徽章、自动附加 Token 拦截器、管理员专享配置面板与个人定制提示词标识 |
 
 ---
 

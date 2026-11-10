@@ -515,3 +515,26 @@ def test_feedback_rule_learning_user_isolation():
         client.post("/api/learning/reset", headers=headers_b)
 
 
+def test_frontend_auth_elements_present():
+    """
+    Phase 4 专项测试：前端 Web 页面静态元素及认证交互结构验证
+    1. 首页正常加载返回 200
+    2. 包含用户登录状态徽章与登录/注册弹窗模态框 (authModal)
+    3. 包含管理员特权提示与普通用户 Key 隐藏保护逻辑
+    4. 包含提示词个人定制标识逻辑
+    """
+    resp = client.get("/")
+    assert resp.status_code == 200
+    html = resp.text
+
+    assert 'id="authModal"' in html
+    assert 'id="authLoginForm"' in html
+    assert 'id="authRegForm"' in html
+    assert 'id="userBadge"' in html
+    assert 'id="normalUserKeyNotice"' in html
+    assert 'fetchWithAuth' in html
+    assert 'appendTokenToUrl' in html
+    assert '个人定制' in html
+
+
+
