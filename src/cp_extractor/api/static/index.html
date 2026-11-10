@@ -43,7 +43,12 @@
       padding: 2px 8px;
       border-radius: 4px;
     }
-    .top-controls { display: flex; align-items: center; gap: 10px; }
+    .top-controls {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: nowrap;
+    }
     .btn-top {
       background: rgba(255,255,255,0.14);
       color: #fff;
@@ -53,8 +58,20 @@
       font-size: 13px;
       cursor: pointer;
       text-decoration: none;
+      white-space: nowrap;
+      user-select: none;
+      transition: background 0.15s, border-color 0.15s, transform 0.1s;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
     }
-    .btn-top:hover { background: rgba(255,255,255,0.24); }
+    .btn-top:hover {
+      background: rgba(255,255,255,0.24);
+      border-color: rgba(255,255,255,0.45);
+    }
+    .btn-top:active {
+      transform: translateY(1px);
+    }
     .status-dot {
       display: inline-block;
       width: 8px;
@@ -62,8 +79,104 @@
       border-radius: 50%;
       margin-right: 6px;
       background: #fbbf24;
+      flex-shrink: 0;
     }
     .status-dot.ready { background: #4ade80; }
+
+    /* 顶部精致下拉菜单 */
+    .top-dropdown {
+      position: relative;
+      display: inline-block;
+    }
+    .top-dropdown-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      cursor: pointer;
+    }
+    .top-dropdown-btn .caret {
+      font-size: 9px;
+      opacity: 0.8;
+      transition: transform 0.2s ease;
+      margin-left: 2px;
+    }
+    .top-dropdown.open .top-dropdown-btn .caret {
+      transform: rotate(180deg);
+    }
+    .top-dropdown-menu {
+      position: absolute;
+      right: 0;
+      top: calc(100% + 8px);
+      background: #ffffff;
+      color: #1e293b;
+      min-width: 230px;
+      border-radius: 8px;
+      box-shadow: 0 10px 25px -5px rgba(0,0,0,0.22), 0 8px 10px -6px rgba(0,0,0,0.1);
+      border: 1px solid #e2e8f0;
+      padding: 6px;
+      z-index: 1050;
+      display: none;
+    }
+    .top-dropdown.open .top-dropdown-menu {
+      display: block;
+      animation: dropdownFadeIn 0.15s ease-out;
+    }
+    @keyframes dropdownFadeIn {
+      from { opacity: 0; transform: translateY(-4px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    .top-dropdown-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 12px;
+      border-radius: 6px;
+      font-size: 13px;
+      color: #334155;
+      cursor: pointer;
+      text-decoration: none;
+      transition: background 0.15s, color 0.15s;
+      white-space: nowrap;
+      border: none;
+      background: none;
+      width: 100%;
+      text-align: left;
+      box-sizing: border-box;
+    }
+    .top-dropdown-item:hover {
+      background: #f1f5f9;
+      color: #0f172a;
+    }
+    .top-dropdown-item.danger {
+      color: #dc2626;
+    }
+    .top-dropdown-item.danger:hover {
+      background: #fef2f2;
+      color: #b91c1c;
+    }
+    .top-dropdown-divider {
+      height: 1px;
+      background: #f1f5f9;
+      margin: 4px 0;
+    }
+    .top-user-header {
+      padding: 8px 12px 10px 12px;
+      border-bottom: 1px solid #f1f5f9;
+      margin-bottom: 4px;
+    }
+    .top-user-name {
+      font-weight: 700;
+      font-size: 13.5px;
+      color: #0f172a;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .top-user-role {
+      font-size: 11.5px;
+      color: #64748b;
+      margin-top: 2px;
+    }
 
     .workspace {
       display: grid;
@@ -679,38 +792,78 @@
 
 <header>
   <div class="brand">
-    <h1>CP-Extractor 标准→控制计划(检查项提取系统)</h1>
-    <span class="tag" id="headerProviderTag">DeepSeek@Christan</span>
+    <h1 style="margin:0; font-size:17.5px; font-weight:700; white-space:nowrap; letter-spacing:-0.2px;">CP-Extractor 标准→控制计划</h1>
+    <span class="tag" id="headerProviderTag" style="cursor:pointer;" title="点击切换或配置大模型" onclick="openModal()">DeepSeek@Christan</span>
   </div>
   <div class="top-controls">
-    <div id="userHeaderBar" style="display:flex; align-items:center; gap:8px;">
-      <span id="userBadge" class="btn-top" style="display:none; background:rgba(255,255,255,0.2); cursor:default; border-color:rgba(255,255,255,0.4);">
-        <span id="userIcon">👤</span> <span id="userNameLabel">已登录</span>
-        <span id="userAdminTag" class="admin-indicator" style="display:none;">管理员</span>
-      </span>
-      <button id="authBtn" class="btn-top" style="background:#2563eb; border-color:#60a5fa; font-weight:600;" onclick="openAuthModal()">🔑 登录 / 注册</button>
-      <button id="changePwdBtn" class="btn-top" style="display:none; background:rgba(255,255,255,0.18); border-color:rgba(255,255,255,0.35);" onclick="openChangePasswordModal()">🔒 修改密码</button>
-      <button id="logoutBtn" class="btn-top" style="display:none; background:rgba(239,68,68,0.25); border-color:rgba(239,68,68,0.4);" onclick="handleLogout()">🚪 退出</button>
-    </div>
-    <button class="btn-top" onclick="openHistoryModal()" style="background:#f0fdf4; color:#15803d; border-color:#bbf7d0; font-weight:600;">
+    <!-- 常驻高频 1: 历史记录 -->
+    <button type="button" class="btn-top" onclick="openHistoryModal()" style="background:#f0fdf4; color:#15803d; border-color:#bbf7d0; font-weight:600;">
       📁 历史记录 (<span id="topHistoryCount">0</span>)
     </button>
-    <button class="btn-top" id="topParsedTextBtn" style="background:#eff6ff; color:var(--primary); border-color:#bfdbfe; font-weight:600;" onclick="openParsedTextModal()">
-      👁️ 查看 PDF/文档解析原文本
+
+    <!-- 常驻高频 2: 解析原文本 -->
+    <button type="button" class="btn-top" id="topParsedTextBtn" style="background:#eff6ff; color:var(--primary); border-color:#bfdbfe; font-weight:600;" onclick="openParsedTextModal()">
+      📄 解析原文本
     </button>
-    <button class="btn-top" onclick="openLearningModal()">
-      🧠 自学习规则 (<span id="topLearnedCount">0</span>)
-    </button>
-    <button class="btn-top" onclick="openLexiconModal()">
-      🗂️ 量检具/单位校验词库
-    </button>
-    <button class="btn-top" onclick="openPromptModal()">
-      📝 提示词与人工确认标准配置
-    </button>
-    <button class="btn-top" onclick="openModal()">
-      <span id="dsStatusDot" class="status-dot"></span><span id="topModelBtnLabel">🤖 模型配置: DeepSeek</span>
-    </button>
-    <a href="/docs" target="_blank" class="btn-top">API 文档</a>
+
+    <!-- 聚合下拉: 规则与配置中心 (大模型、提示词、词库、自学习、API文档) -->
+    <div class="top-dropdown" id="configDropdown">
+      <button type="button" class="btn-top top-dropdown-btn" onclick="toggleDropdown('configDropdown', event)">
+        <span>⚙️ 规则与配置</span>
+        <span class="caret">▼</span>
+      </button>
+      <div class="top-dropdown-menu" style="min-width: 250px;">
+        <button type="button" class="top-dropdown-item" onclick="closeAllDropdowns(); openModal();">
+          <span id="dsStatusDot" class="status-dot"></span>
+          <span id="topModelBtnLabel">🤖 模型配置: DeepSeek</span>
+        </button>
+        <button type="button" class="top-dropdown-item" onclick="closeAllDropdowns(); openPromptModal();">
+          <span>📝 提示词与人工确认标准配置</span>
+        </button>
+        <button type="button" class="top-dropdown-item" onclick="closeAllDropdowns(); openLexiconModal();">
+          <span>🗂️ 量检具与单位校验词库</span>
+        </button>
+        <button type="button" class="top-dropdown-item" onclick="closeAllDropdowns(); openLearningModal();">
+          <span>🧠 人工自学习规则 (<span id="topLearnedCount">0</span>)</span>
+        </button>
+        <div class="top-dropdown-divider"></div>
+        <a href="/docs" target="_blank" class="top-dropdown-item" onclick="closeAllDropdowns()">
+          <span>📖 API 开放接口文档 ↗</span>
+        </a>
+      </div>
+    </div>
+
+    <!-- 用户身份与账号管理区 -->
+    <div id="userHeaderBar" style="display:flex; align-items:center;">
+      <!-- 未登录时展示登录/注册按钮 -->
+      <button type="button" id="authBtn" class="btn-top" style="background:#2563eb; border-color:#60a5fa; font-weight:600;" onclick="openAuthModal()">🔑 登录 / 注册</button>
+
+      <!-- 登录后展示用户专属下拉胶囊 -->
+      <div class="top-dropdown" id="userDropdown" style="display:none;">
+        <button type="button" class="btn-top top-dropdown-btn" id="userBadge" onclick="toggleDropdown('userDropdown', event)" style="background:rgba(255,255,255,0.18); border-color:rgba(255,255,255,0.38);">
+          <span id="userIcon">👤</span>
+          <span id="userNameLabel">已登录</span>
+          <span id="userAdminTag" class="admin-indicator" style="display:none;">管理员</span>
+          <span class="caret">▼</span>
+        </button>
+        <div class="top-dropdown-menu" style="min-width: 210px;">
+          <div class="top-user-header">
+            <div class="top-user-name">
+              <span id="dropdownUserName">工程师</span>
+              <span id="dropdownUserBadge" class="admin-indicator" style="display:none;">管理员</span>
+            </div>
+            <div class="top-user-role" id="dropdownUserRole">质量工程技术人员</div>
+          </div>
+          <button type="button" class="top-dropdown-item" id="changePwdBtn" onclick="closeAllDropdowns(); openChangePasswordModal();">
+            <span>🔒 修改登录密码</span>
+          </button>
+          <div class="top-dropdown-divider"></div>
+          <button type="button" class="top-dropdown-item danger" id="logoutBtn" onclick="closeAllDropdowns(); handleLogout();">
+            <span>🚪 安全退出登录</span>
+          </button>
+        </div>
+      </div>
+    </div>
   </div>
 </header>
 
@@ -1437,25 +1590,59 @@
     return resp;
   }
 
+  // ================= 顶部下拉菜单体系 =================
+  function toggleDropdown(id, event) {
+    if (event) event.stopPropagation();
+    const target = document.getElementById(id);
+    const isOpen = target && target.classList.contains('open');
+    closeAllDropdowns();
+    if (!isOpen && target) {
+      target.classList.add('open');
+    }
+  }
+
+  function closeAllDropdowns() {
+    document.querySelectorAll('.top-dropdown.open').forEach(el => el.classList.remove('open'));
+  }
+
+  window.addEventListener('click', (e) => {
+    if (!e.target.closest('.top-dropdown')) {
+      closeAllDropdowns();
+    }
+  });
+
   function updateAuthUI() {
     const userBadge = document.getElementById('userBadge');
+    const userDropdown = document.getElementById('userDropdown');
     const authBtn = document.getElementById('authBtn');
     const changePwdBtn = document.getElementById('changePwdBtn');
     const logoutBtn = document.getElementById('logoutBtn');
     const userNameLabel = document.getElementById('userNameLabel');
     const userAdminTag = document.getElementById('userAdminTag');
+    const dropdownUserName = document.getElementById('dropdownUserName');
+    const dropdownUserBadge = document.getElementById('dropdownUserBadge');
+    const dropdownUserRole = document.getElementById('dropdownUserRole');
     const normalUserKeyNotice = document.getElementById('normalUserKeyNotice');
     const adminKeyOnlyBadge = document.getElementById('adminKeyOnlyBadge');
     const adminSyncEnvRow = document.getElementById('adminSyncEnvRow');
     const dsApiKeyInput = document.getElementById('dsApiKey');
 
     if (currentUser && authToken) {
-      userBadge.style.display = 'inline-flex';
-      userNameLabel.textContent = currentUser.display_name || currentUser.username;
-      userAdminTag.style.display = currentUser.is_admin ? 'inline-block' : 'none';
-      authBtn.style.display = 'none';
-      if (changePwdBtn) changePwdBtn.style.display = 'inline-block';
-      logoutBtn.style.display = 'inline-block';
+      if (userDropdown) userDropdown.style.display = 'inline-block';
+      if (userBadge) userBadge.style.display = 'inline-flex';
+      const displayName = currentUser.display_name || currentUser.username;
+      if (userNameLabel) userNameLabel.textContent = displayName;
+      if (userAdminTag) userAdminTag.style.display = currentUser.is_admin ? 'inline-block' : 'none';
+      if (dropdownUserName) dropdownUserName.textContent = displayName;
+      if (dropdownUserBadge) dropdownUserBadge.style.display = currentUser.is_admin ? 'inline-block' : 'none';
+      if (dropdownUserRole) {
+        dropdownUserRole.textContent = currentUser.is_admin
+          ? '系统管理员 (具备服务端配置与全局审计特权)'
+          : '质量工程技术人员 (个人沙箱隔离)';
+      }
+      if (authBtn) authBtn.style.display = 'none';
+      if (changePwdBtn) changePwdBtn.style.display = 'flex';
+      if (logoutBtn) logoutBtn.style.display = 'flex';
 
       if (currentUser.is_admin) {
         if (adminKeyOnlyBadge) adminKeyOnlyBadge.style.display = 'inline-block';
@@ -1475,10 +1662,11 @@
         }
       }
     } else {
-      userBadge.style.display = 'none';
-      authBtn.style.display = 'inline-block';
+      if (userDropdown) userDropdown.style.display = 'none';
+      if (userBadge) userBadge.style.display = 'none';
+      if (authBtn) authBtn.style.display = 'inline-block';
       if (changePwdBtn) changePwdBtn.style.display = 'none';
-      logoutBtn.style.display = 'none';
+      if (logoutBtn) logoutBtn.style.display = 'none';
       if (adminKeyOnlyBadge) adminKeyOnlyBadge.style.display = 'none';
       if (normalUserKeyNotice) normalUserKeyNotice.style.display = 'block';
       if (adminSyncEnvRow) adminSyncEnvRow.style.display = 'none';
