@@ -1,7 +1,7 @@
 # 标准→控制计划检查项提取系统 规格说明书 (Living Specification)
 
-版本：v2.0
-日期：2026-11-06
+版本：v2.1
+日期：2026-11-10
 状态：已生效（与代码库通过 `tests/test_spec_consistency.py` 自动化契约绑定）
 
 ---
