@@ -425,3 +425,71 @@ def test_feedback_rule_learning_auto_promotion_and_auto_apply():
         client.post("/api/lexicon/reset", json={"category": "all"})
 
 
+def test_human_review_approval_reason_preservation_and_excel_export():
+    """验证质量工程师在待审核卡片填写「确认准入原因」后，数据完整存入 notes 并反映到 Excel 报表"""
+    import openpyxl
+    from pathlib import Path
+    headers = _get_auth_headers()
+
+    sample_res = client.get("/api/samples/sample_tolerance_iso2768.md")
+    sample_data = sample_res.json()
+    ext_res = client.post(
+        "/api/extract",
+        json={
+            "file_name": "sample_tolerance_iso2768.md",
+            "content": sample_data["content"],
+            "engine_mode": "rule",
+        },
+        headers=headers,
+    )
+    assert ext_res.status_code == 200
+    pkg = ext_res.json()["package"]
+    assert len(pkg["pending_review_items"]) > 0
+
+    # 模拟用户在待审核项填写准入原因
+    target_idx = 0
+    orig_item = pkg["pending_review_items"][target_idx]
+    user_reason = "经主机厂工程技术评审认可，该装配基准尺寸列入控制计划受控"
+    revised_item = {
+        **orig_item,
+        "notes": f"【准入原因: {user_reason}】{orig_item.get('notes') or ''}",
+        "confidence": "高",
+        "needs_human_review": False,
+    }
+
+    approve_res = client.post(
+        "/api/approve-review",
+        json={
+            "package": pkg,
+            "review_index": target_idx,
+            "action": "approve",
+            "updated_item": revised_item,
+        },
+        headers=headers,
+    )
+    assert approve_res.status_code == 200
+    resp_data = approve_res.json()
+    approved_pkg = resp_data["package"]
+
+    # 1. 验证正式检查项中最后一项包含了该准入原因
+    last_item = approved_pkg["check_items"][-1]
+    assert user_reason in last_item["notes"]
+    assert last_item["needs_human_review"] is False
+
+    # 2. 验证导出的 Excel 物理文件第 15 列包含该准入原因
+    import io
+    dl_res = client.get(resp_data["excel_download_url"], headers=headers)
+    assert dl_res.status_code == 200
+    wb = openpyxl.load_workbook(io.BytesIO(dl_res.content))
+    ws = wb["控制计划检查项"]
+    # 查找单元格中是否包含用户填写的准入原因
+    found_reason = False
+    for row in ws.iter_rows(values_only=True):
+        row_str = " ".join(str(c) for c in row if c is not None)
+        if user_reason in row_str:
+            found_reason = True
+            break
+    assert found_reason, f"在导出的 Excel 工作表中未找到填写的准入原因: '{user_reason}'"
+
+
+

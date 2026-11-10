@@ -1089,11 +1089,12 @@
               <th>条款号</th>
               <th>原文引用摘录 (溯源)</th>
               <th>置信度</th>
+              <th>备注 / 准入原因</th>
             </tr>
           </thead>
           <tbody id="validTableBody">
             <tr>
-              <td colspan="12" style="text-align:center; padding:60px 20px; color:var(--muted);">
+              <td colspan="13" style="text-align:center; padding:60px 20px; color:var(--muted);">
                 请在左侧 <b>① 上传 PDF/Word 标准文档</b> &rarr; <b>② 选择文档所属类别</b> &rarr; <b>③ 点击「开始提取检查项」</b>
               </td>
             </tr>
@@ -3088,10 +3089,11 @@
               <th>条款号</th>
               <th>原文引用摘录 (溯源)</th>
               <th>置信度</th>
+              <th>备注 / 准入原因</th>
             </tr>
           </thead>
           <tbody id="validTableBody">
-            ${pkg.check_items.length === 0 ? '<tr><td colspan="12" style="text-align:center; padding:30px; color:var(--muted);">暂无直接准入检查项，请查看「待人工确认项」页签</td></tr>' : pkg.check_items.map((item, idx) => `
+            ${pkg.check_items.length === 0 ? '<tr><td colspan="13" style="text-align:center; padding:30px; color:var(--muted);">暂无直接准入检查项，请查看「待人工确认项」页签</td></tr>' : pkg.check_items.map((item, idx) => `
               <tr>
                 <td>${idx + 1}</td>
                 <td style="font-weight:600;">${escapeHtml(item.characteristic_name)}</td>
@@ -3109,6 +3111,7 @@
                 <td style="font-weight:600;">${renderClauseCell(item, pkg)}</td>
                 <td><div class="quote-box">${escapeHtml(item.source_quote)}</div></td>
                 <td><span class="badge ${item.confidence === '高' ? 'badge-high' : (item.confidence === '中' ? 'badge-med' : 'badge-low')}">${item.confidence}</span></td>
+                <td style="font-size:12px; color:var(--muted);">${escapeHtml(item.notes || '-')}</td>
               </tr>
             `).join('')}
           </tbody>
@@ -3149,6 +3152,10 @@
                 <option value="true" ${item.is_mandatory ? 'selected' : ''}>强制要求</option>
                 <option value="false" ${!item.is_mandatory ? 'selected' : ''}>建议性 / 仅供参考 / 无判据</option>
               </select>
+            </div>
+            <div style="grid-column: span 2;">
+              <label style="font-size:11.5px; font-weight:600; color:#0f766e;">💡 本项确认准入控制计划的原因（由用户填写）：</label>
+              <input type="text" class="form-control" id="revApproveReason_${idx}" placeholder="如：经工程与客户技术协议确认放行 / 关键定位尺寸纳入控制计划受控" style="border-color:#5eead4; background:#f0fdfa;" />
             </div>
           </div>
           <div style="display:flex; gap:8px; justify-content:flex-end; margin-top:8px;">
@@ -3197,6 +3204,10 @@
               <label style="font-size:11px; color:var(--muted);">反应计划：</label>
               <input type="text" class="form-control" id="revReactionPlan_${idx}" value="${escapeHtml(item.reaction_plan || '')}" placeholder="如 停机隔离并100%全检追溯" />
             </div>
+            <div style="grid-column: span 2;">
+              <label style="font-size:11.5px; font-weight:600; color:#0f766e;">💡 本项确认准入控制计划的原因（由用户填写）：</label>
+              <input type="text" class="form-control" id="revApproveReason_${idx}" placeholder="如：经工程与客户技术协议确认放行 / 关键定位尺寸纳入控制计划受控" style="border-color:#5eead4; background:#f0fdfa;" />
+            </div>
           </div>
           <div style="display:flex; gap:8px; justify-content:flex-end;">
             <button class="btn-sm btn-reject" onclick="handleReview(${idx}, 'reject')">✖️ 驳回剔除</button>
@@ -3230,6 +3241,11 @@
     const isCharList = !!currentPackage.characteristics;
     let updated_item = null;
     if (action === 'approve') {
+      const approveReason = (document.getElementById(`revApproveReason_${idx}`)?.value || '').trim();
+      let finalNotes = orig.notes || '';
+      if (approveReason) {
+        finalNotes = orig.notes ? `【准入原因: ${approveReason}】${orig.notes}` : `【准入原因: ${approveReason}】`;
+      }
       if (isCharList) {
         const clausesStr = document.getElementById(`revCharClauses_${idx}`)?.value || '';
         updated_item = {
@@ -3240,24 +3256,26 @@
           is_mandatory: document.getElementById(`revCharMandatory_${idx}`)?.value === 'true',
           confidence: '高',
           needs_human_review: false,
+          notes: finalNotes || null,
         };
       } else {
-      const sCls = (document.getElementById(`revSpecialCls_${idx}`)?.value || '').trim();
-      const sFreq = (document.getElementById(`revSampleFreq_${idx}`)?.value || '').trim();
-      const cMethod = (document.getElementById(`revCtrlMethod_${idx}`)?.value || '').trim();
-      const rPlan = (document.getElementById(`revReactionPlan_${idx}`)?.value || '').trim();
-      updated_item = {
-        ...orig,
-        special_char_class: sCls || null,
-        specification: document.getElementById(`revSpec_${idx}`).value,
-        inspection_method: document.getElementById(`revMethod_${idx}`).value,
-        acceptance_criteria: document.getElementById(`revCriteria_${idx}`).value,
-        sample_size_frequency: sFreq || null,
-        control_method: cMethod || null,
-        reaction_plan: rPlan || null,
-        confidence: '高',
-        needs_human_review: false,
-      };
+        const sCls = (document.getElementById(`revSpecialCls_${idx}`)?.value || '').trim();
+        const sFreq = (document.getElementById(`revSampleFreq_${idx}`)?.value || '').trim();
+        const cMethod = (document.getElementById(`revCtrlMethod_${idx}`)?.value || '').trim();
+        const rPlan = (document.getElementById(`revReactionPlan_${idx}`)?.value || '').trim();
+        updated_item = {
+          ...orig,
+          special_char_class: sCls || null,
+          specification: document.getElementById(`revSpec_${idx}`).value,
+          inspection_method: document.getElementById(`revMethod_${idx}`).value,
+          acceptance_criteria: document.getElementById(`revCriteria_${idx}`).value,
+          sample_size_frequency: sFreq || null,
+          control_method: cMethod || null,
+          reaction_plan: rPlan || null,
+          confidence: '高',
+          needs_human_review: false,
+          notes: finalNotes || null,
+        };
       }
     }
 
