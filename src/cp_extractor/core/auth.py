@@ -268,3 +268,23 @@ class AuthManager:
         if not user.is_active:
             raise ValueError("该账号已被冻结")
         return user
+
+    def change_password(self, user_id: int, old_password: str, new_password: str) -> None:
+        """修改用户登录密码"""
+        if not new_password or len(new_password) < 5:
+            raise ValueError("新密码长度至少需要 5 位")
+
+        with self._connect() as conn:
+            row = conn.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
+            if not row:
+                raise ValueError("用户不存在")
+
+            if not verify_password(old_password, row["password_hash"], row["salt"]):
+                raise ValueError("原密码输入错误，请重新确认")
+
+            new_pwd_hash, new_salt = hash_password(new_password)
+            conn.execute(
+                "UPDATE users SET password_hash = ?, salt = ? WHERE id = ?",
+                (new_pwd_hash, new_salt, user_id),
+            )
+            conn.commit()

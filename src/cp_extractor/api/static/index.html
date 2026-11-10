@@ -689,6 +689,7 @@
         <span id="userAdminTag" class="admin-indicator" style="display:none;">管理员</span>
       </span>
       <button id="authBtn" class="btn-top" style="background:#2563eb; border-color:#60a5fa; font-weight:600;" onclick="openAuthModal()">🔑 登录 / 注册</button>
+      <button id="changePwdBtn" class="btn-top" style="display:none; background:rgba(255,255,255,0.18); border-color:rgba(255,255,255,0.35);" onclick="openChangePasswordModal()">🔒 修改密码</button>
       <button id="logoutBtn" class="btn-top" style="display:none; background:rgba(239,68,68,0.25); border-color:rgba(239,68,68,0.4);" onclick="handleLogout()">🚪 退出</button>
     </div>
     <button class="btn-top" onclick="openHistoryModal()" style="background:#f0fdf4; color:#15803d; border-color:#bbf7d0; font-weight:600;">
@@ -927,12 +928,9 @@
         <label>用户名 (Username)</label>
         <input type="text" id="authLoginUsername" class="form-control" placeholder="请输入用户名" onkeydown="if(event.key==='Enter') doLogin()" />
       </div>
-      <div class="field" style="margin-bottom:14px;">
+      <div class="field" style="margin-bottom:18px;">
         <label>密码 (Password)</label>
         <input type="password" id="authLoginPassword" class="form-control" placeholder="请输入登录密码" onkeydown="if(event.key==='Enter') doLogin()" />
-      </div>
-      <div style="font-size:11.5px; color:var(--muted); background:#f8fafc; border:1px solid #e2e8f0; padding:8px 10px; border-radius:6px; margin-bottom:16px;">
-        💡 提示：系统管理员初始账号密码为 <code>admin</code> / <code>admin</code>，普通工程师账号可直接在右侧 Tab 注册。
       </div>
       <button type="button" class="btn-primary" id="loginSubmitBtn" onclick="doLogin()">立即登录</button>
     </div>
@@ -952,6 +950,32 @@
         <input type="password" id="authRegPassword" class="form-control" placeholder="至少 4 位字符" onkeydown="if(event.key==='Enter') doRegister()" />
       </div>
       <button type="button" class="btn-primary" id="regSubmitBtn" onclick="doRegister()">注册并自动登录</button>
+    </div>
+  </div>
+</div>
+
+<!-- 修改密码模态框 -->
+<div class="modal-backdrop" id="changePasswordModal" style="display:none; z-index:9995;">
+  <div class="modal-card" style="max-width:420px; width:92vw;">
+    <div class="auth-modal-header" style="margin-bottom:14px;">
+      <h3 style="margin:0; font-size:16px; font-weight:700;">🔒 修改登录密码</h3>
+      <button class="btn-close" onclick="closeChangePasswordModal()">✖ 关闭</button>
+    </div>
+    <div class="auth-error-box" id="changePwdErrorBox" style="display:none;"></div>
+    <div style="display:flex; flex-direction:column; gap:12px;">
+      <div class="field">
+        <label>原密码 (Current Password)</label>
+        <input type="password" id="oldPasswordInput" class="form-control" placeholder="请输入当前旧密码" onkeydown="if(event.key==='Enter') submitChangePassword()" />
+      </div>
+      <div class="field">
+        <label>新密码 (New Password，至少 5 位)</label>
+        <input type="password" id="newPasswordInput" class="form-control" placeholder="请输入新密码 (至少5位)" onkeydown="if(event.key==='Enter') submitChangePassword()" />
+      </div>
+      <div class="field">
+        <label>确认新密码 (Confirm Password)</label>
+        <input type="password" id="confirmPasswordInput" class="form-control" placeholder="请再次输入新密码" onkeydown="if(event.key==='Enter') submitChangePassword()" />
+      </div>
+      <button type="button" class="btn-primary" id="changePwdSubmitBtn" onclick="submitChangePassword()" style="margin-top:6px;">确认修改密码</button>
     </div>
   </div>
 </div>
@@ -1390,7 +1414,7 @@
       currentUser = null;
       updateAuthUI();
       openAuthModal();
-      showAuthError('使用此功能需先登录！初始管理员账号为 admin / admin');
+      showAuthError('使用此功能需先登录！请先登录或注册账号。');
     }
     return resp;
   }
@@ -1398,6 +1422,7 @@
   function updateAuthUI() {
     const userBadge = document.getElementById('userBadge');
     const authBtn = document.getElementById('authBtn');
+    const changePwdBtn = document.getElementById('changePwdBtn');
     const logoutBtn = document.getElementById('logoutBtn');
     const userNameLabel = document.getElementById('userNameLabel');
     const userAdminTag = document.getElementById('userAdminTag');
@@ -1411,6 +1436,7 @@
       userNameLabel.textContent = currentUser.display_name || currentUser.username;
       userAdminTag.style.display = currentUser.is_admin ? 'inline-block' : 'none';
       authBtn.style.display = 'none';
+      if (changePwdBtn) changePwdBtn.style.display = 'inline-block';
       logoutBtn.style.display = 'inline-block';
 
       if (currentUser.is_admin) {
@@ -1433,6 +1459,7 @@
     } else {
       userBadge.style.display = 'none';
       authBtn.style.display = 'inline-block';
+      if (changePwdBtn) changePwdBtn.style.display = 'none';
       logoutBtn.style.display = 'none';
       if (adminKeyOnlyBadge) adminKeyOnlyBadge.style.display = 'none';
       if (normalUserKeyNotice) normalUserKeyNotice.style.display = 'block';
@@ -1580,6 +1607,88 @@
     refreshLearningBadge();
     const topCount = document.getElementById('topHistoryCount');
     if (topCount) topCount.textContent = '0';
+  }
+
+  function openChangePasswordModal() {
+    const modal = document.getElementById('changePasswordModal');
+    if (modal) modal.style.display = 'flex';
+    const errBox = document.getElementById('changePwdErrorBox');
+    if (errBox) errBox.style.display = 'none';
+    const oldP = document.getElementById('oldPasswordInput');
+    const newP = document.getElementById('newPasswordInput');
+    const confP = document.getElementById('confirmPasswordInput');
+    if (oldP) oldP.value = '';
+    if (newP) newP.value = '';
+    if (confP) confP.value = '';
+    setTimeout(() => { if (oldP) oldP.focus(); }, 60);
+  }
+
+  function closeChangePasswordModal() {
+    const modal = document.getElementById('changePasswordModal');
+    if (modal) modal.style.display = 'none';
+  }
+
+  async function submitChangePassword() {
+    const oldPwd = document.getElementById('oldPasswordInput').value;
+    const newPwd = document.getElementById('newPasswordInput').value;
+    const confirmPwd = document.getElementById('confirmPasswordInput').value;
+    const errBox = document.getElementById('changePwdErrorBox');
+    if (errBox) errBox.style.display = 'none';
+
+    if (!oldPwd) {
+      if (errBox) {
+        errBox.textContent = '请输入当前原密码！';
+        errBox.style.display = 'block';
+      }
+      return;
+    }
+    if (!newPwd || newPwd.length < 5) {
+      if (errBox) {
+        errBox.textContent = '新密码长度至少需要 5 位字符！';
+        errBox.style.display = 'block';
+      }
+      return;
+    }
+    if (newPwd !== confirmPwd) {
+      if (errBox) {
+        errBox.textContent = '两次输入的新密码不一致，请重新检查！';
+        errBox.style.display = 'block';
+      }
+      return;
+    }
+
+    const btn = document.getElementById('changePwdSubmitBtn');
+    if (btn) {
+      btn.disabled = true;
+      btn.textContent = '正在修改...';
+    }
+
+    try {
+      const resp = await fetchWithAuth('/api/auth/change-password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          old_password: oldPwd,
+          new_password: newPwd,
+        }),
+      });
+      const data = await resp.json();
+      if (!resp.ok) {
+        throw new Error(data.detail || '修改密码失败');
+      }
+      alert('✅ 密码修改成功！请妥善保管您的新密码。');
+      closeChangePasswordModal();
+    } catch (e) {
+      if (errBox) {
+        errBox.textContent = '❌ ' + (e.message || e);
+        errBox.style.display = 'block';
+      }
+    } finally {
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = '确认修改密码';
+      }
+    }
   }
 
   async function checkAuthSession() {

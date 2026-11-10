@@ -35,3 +35,8 @@ class TokenResponse(BaseModel):
     access_token: str = Field(..., description="认证凭证 Bearer Token")
     token_type: str = Field(default="bearer", description="Token 类型")
     user: UserResponse = Field(..., description="当前用户信息")
+
+
+class ChangePasswordRequest(BaseModel):
+    old_password: str = Field(..., description="当前旧密码")
+    new_password: str = Field(..., min_length=5, max_length=128, description="新密码 (至少5位)")

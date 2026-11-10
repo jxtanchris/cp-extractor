@@ -520,8 +520,10 @@ def test_frontend_auth_elements_present():
     Phase 4 专项测试：前端 Web 页面静态元素及认证交互结构验证
     1. 首页正常加载返回 200
     2. 包含用户登录状态徽章与登录/注册弹窗模态框 (authModal)
-    3. 包含管理员特权提示与普通用户 Key 隐藏保护逻辑
-    4. 包含提示词个人定制标识逻辑
+    3. 登录弹窗不显示系统管理员初始密码等提示（提升安全性与简洁度）
+    4. 包含管理员特权提示与普通用户 Key 隐藏保护逻辑
+    5. 包含提示词个人定制标识逻辑
+    6. 包含修改密码入口与修改密码模态框
     """
     resp = client.get("/")
     assert resp.status_code == 200
@@ -531,10 +533,77 @@ def test_frontend_auth_elements_present():
     assert 'id="authLoginForm"' in html
     assert 'id="authRegForm"' in html
     assert 'id="userBadge"' in html
+    assert 'id="changePwdBtn"' in html
+    assert 'id="changePasswordModal"' in html
+    assert 'submitChangePassword' in html
     assert 'id="normalUserKeyNotice"' in html
     assert 'fetchWithAuth' in html
     assert 'appendTokenToUrl' in html
     assert '个人定制' in html
+    # 验证登录模态框中无默认账号密码提示
+    assert '系统管理员初始账号密码为' not in html
+
+
+def test_user_change_password_workflow():
+    """测试已登录用户修改个人密码全流程与安全性"""
+    # 1. 未登录访问修改密码接口 -> 401 拦截
+    unauth_resp = client.post(
+        "/api/auth/change-password",
+        json={"old_password": "any", "new_password": "newpassword123"},
+    )
+    assert unauth_resp.status_code == 401
+
+    # 2. 注册并登录专用测试账号
+    uname = f"pwd_user_{int(time.time()*1000)}"
+    reg_resp = client.post(
+        "/api/auth/register",
+        json={"username": uname, "password": "OriginalPwd123", "display_name": "密码测试工"},
+    )
+    assert reg_resp.status_code == 200
+    token = reg_resp.json()["access_token"]
+    headers = {"Authorization": f"Bearer {token}"}
+
+    # 3. 原密码输入错误 -> 400 拦截
+    wrong_old_resp = client.post(
+        "/api/auth/change-password",
+        json={"old_password": "WrongPassword!", "new_password": "ValidNewPassword888"},
+        headers=headers,
+    )
+    assert wrong_old_resp.status_code == 400
+    assert "原密码输入错误" in wrong_old_resp.json()["detail"]
+
+    # 4. 新密码过短 (<5位) -> 422 验证失败
+    short_pwd_resp = client.post(
+        "/api/auth/change-password",
+        json={"old_password": "OriginalPwd123", "new_password": "123"},
+        headers=headers,
+    )
+    assert short_pwd_resp.status_code in (400, 422)
+
+    # 5. 正确修改密码 -> 200 成功
+    ok_resp = client.post(
+        "/api/auth/change-password",
+        json={"old_password": "OriginalPwd123", "new_password": "BrandNewSecret999"},
+        headers=headers,
+    )
+    assert ok_resp.status_code == 200
+    assert ok_resp.json()["status"] == "success"
+
+    # 6. 使用原密码再次登录 -> 401 失败
+    old_login_resp = client.post(
+        "/api/auth/login",
+        json={"username": uname, "password": "OriginalPwd123"},
+    )
+    assert old_login_resp.status_code == 401
+
+    # 7. 使用新密码登录 -> 200 成功
+    new_login_resp = client.post(
+        "/api/auth/login",
+        json={"username": uname, "password": "BrandNewSecret999"},
+    )
+    assert new_login_resp.status_code == 200
+    assert "access_token" in new_login_resp.json()
+
 
 
 

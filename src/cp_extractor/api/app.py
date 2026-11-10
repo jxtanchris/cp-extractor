@@ -39,6 +39,7 @@ from ..core.mapper import CharacteristicListExcelMapper, ControlPlanExcelMapper
 from ..core.parser import DocumentParser
 from ..core.prompt_builder import PromptBuilder
 from ..schemas.auth import (
+    ChangePasswordRequest,
     TokenResponse,
     UserLoginRequest,
     UserRegisterRequest,
@@ -377,6 +378,24 @@ def get_current_user_info(current_user: UserResponse = Depends(get_current_user)
 def logout_user(current_user: UserResponse = Depends(get_current_user)):
     """安全退出登录"""
     return {"logged_out": True, "message": f"用户 {current_user.username} 已安全退出登录"}
+
+
+@app.post("/api/auth/change-password")
+def change_user_password(
+    req: ChangePasswordRequest,
+    current_user: UserResponse = Depends(get_current_user),
+):
+    """已登录用户修改个人登录密码"""
+    auth_mgr = AuthManager()
+    try:
+        auth_mgr.change_password(
+            user_id=current_user.id,
+            old_password=req.old_password,
+            new_password=req.new_password,
+        )
+        return {"status": "success", "message": "密码修改成功"}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 @app.get("/api/config")
