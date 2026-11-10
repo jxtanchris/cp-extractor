@@ -204,18 +204,57 @@
       font-weight: 600;
     }
     .panel-body {
-      padding: 16px;
+      padding: 12px 14px;
       flex: 1;
       overflow-y: auto;
       display: flex;
       flex-direction: column;
-      gap: 18px;
+      gap: 11px;
+    }
+
+    /* 提取模式分段切换器 (Segmented Control) */
+    .mode-segmented-wrap {
+      background: #f1f5f9;
+      border-radius: 8px;
+      padding: 3px;
+      border: 1px solid #e2e8f0;
+    }
+    .mode-segmented-bar {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 3px;
+    }
+    .mode-seg-btn {
+      border: none;
+      background: transparent;
+      padding: 6px 8px;
+      border-radius: 6px;
+      font-size: 12px;
+      font-weight: 600;
+      color: #64748b;
+      cursor: pointer;
+      transition: all 0.15s ease;
+      white-space: nowrap;
+      text-align: center;
+      user-select: none;
+    }
+    .mode-seg-btn.active {
+      background: #ffffff;
+      color: var(--primary);
+      box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+    }
+    .mode-hint-bar {
+      font-size: 11px;
+      color: var(--muted);
+      padding: 3px 6px 1px 6px;
+      line-height: 1.35;
+      text-align: left;
     }
 
     /* Step Blocks */
-    .step-block { display: flex; flex-direction: column; gap: 8px; }
+    .step-block { display: flex; flex-direction: column; gap: 6px; }
     .step-title {
-      font-size: 13.5px;
+      font-size: 13px;
       font-weight: 600;
       color: #0f172a;
       display: flex;
@@ -225,25 +264,26 @@
     .step-num {
       background: var(--primary);
       color: #fff;
-      width: 22px;
-      height: 22px;
+      width: 20px;
+      height: 20px;
       border-radius: 50%;
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      font-size: 12px;
+      font-size: 11.5px;
       font-weight: 700;
+      flex-shrink: 0;
     }
 
     /* Dropzone */
     .dropzone {
-      border: 2px dashed #94a3b8;
-      border-radius: 10px;
-      padding: 24px 16px;
+      border: 1.5px dashed #94a3b8;
+      border-radius: 8px;
+      padding: 13px 12px;
       text-align: center;
       background: #f8fafc;
       cursor: pointer;
-      transition: all 0.2s;
+      transition: all 0.15s;
     }
     .dropzone:hover, .dropzone.dragover {
       border-color: var(--primary);
@@ -254,23 +294,23 @@
       border-color: var(--success);
       background: #f0fdf4;
     }
-    .dropzone .icon { font-size: 32px; margin-bottom: 6px; }
-    .dropzone .main-text { font-weight: 600; color: #1e293b; font-size: 14px; }
-    .dropzone .sub-text { font-size: 12px; color: var(--muted); margin-top: 4px; }
+    .dropzone .icon { font-size: 24px; margin-bottom: 3px; line-height: 1; }
+    .dropzone .main-text { font-weight: 600; color: #1e293b; font-size: 13px; }
+    .dropzone .sub-text { font-size: 11px; color: var(--muted); margin-top: 2px; }
 
     /* Category Cards */
     .cat-grid {
       display: grid;
       grid-template-columns: 1fr 1fr;
-      gap: 8px;
+      gap: 6px;
     }
     .cat-card {
-      border: 1.5px solid var(--border);
-      border-radius: 8px;
-      padding: 10px 12px;
+      border: 1px solid var(--border);
+      border-radius: 7px;
+      padding: 6px 9px;
       cursor: pointer;
       background: #fff;
-      transition: all 0.15s;
+      transition: all 0.12s;
       text-align: left;
     }
     .cat-card:hover { border-color: #94a3b8; background: #f8fafc; }
@@ -279,8 +319,15 @@
       background: #eff6ff;
       box-shadow: 0 0 0 1px var(--primary);
     }
-    .cat-card .cat-name { font-weight: 600; font-size: 13px; color: #0f172a; }
-    .cat-card .cat-desc { font-size: 11px; color: var(--muted); margin-top: 2px; }
+    .cat-card .cat-name { font-weight: 600; font-size: 12.5px; color: #0f172a; white-space: nowrap; }
+    .cat-card .cat-desc {
+      font-size: 10.5px;
+      color: var(--muted);
+      margin-top: 1px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
 
     .btn-primary {
       background: var(--primary);
@@ -875,37 +922,38 @@
     </div>
     <div class="panel-body">
 
+      <!-- 顶部分段控制器：目标模式选择 (先定模式，再走 1-2-3 向导) -->
+      <div class="mode-segmented-wrap">
+        <div class="mode-segmented-bar">
+          <button type="button" id="modeBtnFull" class="mode-seg-btn active" onclick="switchMode('full')">
+            🎯 完整控制计划 (15字段)
+          </button>
+          <button type="button" id="modeBtnCharList" class="mode-seg-btn" onclick="switchMode('char_list')">
+            📋 仅特性清单 (偏召回)
+          </button>
+        </div>
+        <div id="modeHint" class="mode-hint-bar">完整模式：提取产品/过程CTQ公差、量检具方法与判定准则，并匹配分块插件与门禁。</div>
+      </div>
+
       <!-- 第一步：上传标准文档或粘贴截图 -->
       <div class="step-block">
         <div class="step-title">
           <span class="step-num">1</span>
-          <span>上传标准文档或截图 (支持 Cmd+V 粘贴截图)</span>
+          <span>上传标准文档或截图</span>
         </div>
         <label class="dropzone" id="dropzone">
           <input type="file" id="fileInput" accept=".pdf,.docx,.md,.txt,.png,.jpg,.jpeg,.webp,.bmp,.tiff,.heic,image/*" style="display:none" onchange="onFileSelected(event)" />
           <div class="icon" id="dzIcon">📄</div>
-          <div class="main-text" id="dzTitle">点击选择、拖拽文档或按 Cmd+V 粘贴截图</div>
-          <div class="sub-text" id="dzSub">支持 PDF(含扫描件)、Word、截图(.png/.jpg) 及 Markdown</div>
-          <img id="dzPreviewImg" style="display:none; max-width:100%; max-height:110px; margin-top:8px; border-radius:6px; border:1px solid var(--border); object-fit:contain;" alt="截图预览" />
+          <div class="main-text" id="dzTitle">点击、拖拽文档 或 按 <kbd style="background:#e2e8f0; border-radius:3px; padding:1px 5px; font-size:11px; font-family:inherit;">Cmd+V</kbd> 粘贴截图</div>
+          <div class="sub-text" id="dzSub">支持 PDF (含扫描件)、Word (.docx)、截图及 Markdown</div>
+          <img id="dzPreviewImg" style="display:none; max-width:100%; max-height:90px; margin-top:6px; border-radius:6px; border:1px solid var(--border); object-fit:contain;" alt="截图预览" />
         </label>
-        <div id="fileActionsBar" style="display:flex; margin-top:8px; justify-content:space-between; align-items:center;">
-          <span id="fileParsedMeta" style="font-size:12px; color:var(--muted);">尚未选择文件（可先点击右侧按钮查看已载入文本）</span>
-          <button type="button" class="btn-sm" style="background:#f0f9ff; color:var(--primary); border:1px solid #bfdbfe; font-weight:600; padding:4px 10px; cursor:pointer;" onclick="openParsedTextModal()">
-            👁️ 查看 PDF/文档解析原文本
-          </button>
+        <div id="fileActionsBar" style="display:flex; justify-content:space-between; align-items:center; font-size:11.5px; padding:0 2px;">
+          <span id="fileParsedMeta" style="color:var(--muted);">尚未选择文件</span>
+          <a href="javascript:void(0)" onclick="openParsedTextModal()" style="color:var(--primary); text-decoration:none; font-weight:500;">
+            👁️ 原文预览
+          </a>
         </div>
-      </div>
-
-      <!-- 模式选择开关：完整控制计划 vs 仅特性清单 -->
-      <div class="step-block" style="background: #f8fafc; border: 1px solid #cbd5e1; border-radius: 8px; padding: 10px 12px;">
-        <div style="display:flex; justify-content:space-between; align-items:center;">
-          <span style="font-weight:600; font-size:13px; color:#1e293b;">🎯 提取目标模式</span>
-          <div style="display:flex; gap:6px;">
-            <button type="button" id="modeBtnFull" class="btn-sm" style="background:var(--primary); color:#fff; font-weight:600; border:1px solid var(--primary);" onclick="switchMode('full')">完整控制计划 (15字段)</button>
-            <button type="button" id="modeBtnCharList" class="btn-sm" style="background:#fff; color:var(--text); border:1px solid #cbd5e1;" onclick="switchMode('char_list')">仅特性清单 (偏召回)</button>
-          </div>
-        </div>
-        <div id="modeHint" style="font-size:11.5px; color:var(--muted); margin-top:4px;">完整模式：提取产品/过程CTQ的公差、量检具方法与判定准则，并匹配分块插件与门禁。</div>
       </div>
 
       <!-- 第二步：选择标准所属类别 -->
@@ -913,16 +961,16 @@
         <div class="step-title" style="justify-content: space-between;">
           <div style="display:flex; align-items:center; gap:8px;">
             <span class="step-num">2</span>
-            <span>选择文档所属类别（加载对应专用插件）</span>
+            <span>选择标准类别 (加载专用插件)</span>
           </div>
-          <button type="button" class="btn-sm" style="background:#eff6ff; color:var(--primary); border:1px solid #bfdbfe; padding:3px 9px; font-size:11.5px;" onclick="openPromptModal(selectedCategory)">
-            ⚙️ 调整提示词/确认规则
-          </button>
+          <a href="javascript:void(0)" onclick="openPromptModal(selectedCategory)" style="font-size:11.5px; color:var(--primary); text-decoration:none; font-weight:500;" title="调整当前类别提示词与门禁">
+            ⚙️ 规则设置
+          </a>
         </div>
         <div class="cat-grid" id="catGrid">
           <div class="cat-card selected" data-cat="auto" onclick="selectCategory('auto', this)" style="grid-column: span 2; background:#f0f9ff; border-color:#93c5fd;">
-            <div class="cat-name">🔀 自动识别 / 复合型标准（章节块级动态路由）</div>
-            <div class="cat-desc">按章节分块自动匹配公差/材料/工艺/外观插件，单块跨类时自动合并多插件</div>
+            <div class="cat-name">🔀 自动识别 / 复合型标准 (推荐)</div>
+            <div class="cat-desc">按章节分块动态路由公差/材料/工艺/外观专用插件</div>
           </div>
           <div class="cat-card" data-cat="tolerance" onclick="selectCategory('tolerance', this)">
             <div class="cat-name">📐 公差/尺寸标准</div>
@@ -944,20 +992,22 @@
       </div>
 
       <!-- 第三步：点击按钮提取 -->
-      <div class="step-block" style="margin-top:4px;">
-        <div class="step-title" style="justify-content: space-between;">
+      <div class="step-block" style="margin-top:2px;">
+        <div class="step-title" style="justify-content: space-between; align-items:center;">
           <div style="display:flex; align-items:center; gap:8px;">
             <span class="step-num">3</span>
-            <span>调用大模型提取控制计划检查项</span>
+            <span>开始智能提取</span>
           </div>
-          <button type="button" class="btn-sm" style="background:#eff6ff; color:var(--primary); border:1px solid #bfdbfe; padding:3px 9px; font-size:11.5px;" onclick="openModal()">
-            🔄 切换模型 (<span id="step3ModelBadge">DeepSeek · deepseek-chat</span>)
-          </button>
+          <span style="font-size:11.5px; display:inline-flex; align-items:center; gap:4px; cursor:pointer;" onclick="openModal()" title="点击切换当前大模型">
+            <span class="status-dot ready" style="width:6px; height:6px; margin-right:0;"></span>
+            <span id="step3ModelBadge" style="font-weight:500; color:#334155;">DeepSeek</span>
+            <span style="color:var(--primary); text-decoration:underline;">切换</span>
+          </span>
         </div>
-        <button class="btn-primary" id="extractBtn" onclick="startExtraction()">
+        <button class="btn-primary" id="extractBtn" onclick="startExtraction()" style="padding:11px 16px; font-size:14.5px; box-shadow:0 2px 6px rgba(37,99,235,0.25);">
           🚀 开始提取检查项
         </button>
-        <div id="statusMsg" style="font-size:12px; color:var(--muted); text-align:center; min-height:18px;"></div>
+        <div id="statusMsg" style="font-size:11.5px; color:var(--muted); text-align:center; min-height:16px;"></div>
       </div>
 
     </div>
@@ -2091,23 +2141,35 @@
     const extractBtn = document.getElementById('extractBtn');
 
     if (mode === 'char_list') {
-      btnFull.style.background = '#fff';
-      btnFull.style.color = 'var(--text)';
-      btnFull.style.border = '1px solid #cbd5e1';
-      btnChar.style.background = 'var(--primary)';
-      btnChar.style.color = '#fff';
-      btnChar.style.border = '1px solid var(--primary)';
-      hint.textContent = '仅特性清单模式：通读全文列出所有特性名称（中文规范名+原文名），不提取规范/方法/判据，统一模板偏召回。';
-      if (catStep) catStep.style.opacity = '0.5';
+      if (btnFull) {
+        btnFull.classList.remove('active');
+        btnFull.style.background = 'transparent';
+        btnFull.style.color = '#64748b';
+        btnFull.style.boxShadow = 'none';
+      }
+      if (btnChar) {
+        btnChar.classList.add('active');
+        btnChar.style.background = '#ffffff';
+        btnChar.style.color = 'var(--primary)';
+        btnChar.style.boxShadow = '0 1px 3px rgba(0,0,0,0.1)';
+      }
+      if (hint) hint.textContent = '特性清单模式：通读全文列出所有特性名称，不提取公差与量检具，统一通用模板偏召回。';
+      if (catStep) catStep.style.opacity = '0.45';
       if (extractBtn) extractBtn.textContent = '🚀 开始提取特性清单';
     } else {
-      btnFull.style.background = 'var(--primary)';
-      btnFull.style.color = '#fff';
-      btnFull.style.border = '1px solid var(--primary)';
-      btnChar.style.background = '#fff';
-      btnChar.style.color = 'var(--text)';
-      btnChar.style.border = '1px solid #cbd5e1';
-      hint.textContent = '完整模式：提取产品/过程CTQ的公差、量检具方法与判定准则，并匹配分块插件与门禁。';
+      if (btnFull) {
+        btnFull.classList.add('active');
+        btnFull.style.background = '#ffffff';
+        btnFull.style.color = 'var(--primary)';
+        btnFull.style.boxShadow = '0 1px 3px rgba(0,0,0,0.1)';
+      }
+      if (btnChar) {
+        btnChar.classList.remove('active');
+        btnChar.style.background = 'transparent';
+        btnChar.style.color = '#64748b';
+        btnChar.style.boxShadow = 'none';
+      }
+      if (hint) hint.textContent = '完整模式：提取产品/过程CTQ公差、量检具方法与判定准则，并匹配分块插件与门禁。';
       if (catStep) catStep.style.opacity = '1.0';
       if (extractBtn) extractBtn.textContent = '🚀 开始提取检查项';
     }
@@ -2431,7 +2493,8 @@
     }
     const step3Badge = document.getElementById('step3ModelBadge');
     if (step3Badge) {
-      step3Badge.textContent = `${meta.short_name} · ${curModel}`;
+      step3Badge.textContent = meta.short_name;
+      step3Badge.title = `${meta.name} (${curModel})`;
     }
   }
 
