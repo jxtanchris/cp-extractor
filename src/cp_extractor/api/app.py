@@ -80,6 +80,31 @@ def get_current_user(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
+
+def get_current_user_optional(
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security_scheme),
+) -> Optional[UserResponse]:
+    """可选鉴权依赖项：若提供有效 Token 则返回当前用户，否则返回 None"""
+    if not credentials:
+        return None
+    auth_mgr = AuthManager()
+    try:
+        return auth_mgr.authenticate_token(credentials.credentials)
+    except ValueError:
+        return None
+
+
+def get_admin_user(
+    current_user: UserResponse = Depends(get_current_user),
+) -> UserResponse:
+    """管理员权限拦截依赖项：仅允许具有管理员权限的用户 (admin) 操作"""
+    if not current_user.is_admin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="权限不足：仅系统管理员 (admin) 允许修改 API Key 或调整服务端配置",
+        )
+    return current_user
+
 app = FastAPI(
     title="CP-Extractor 标准→控制计划检查项提取系统",
     description="基于 RAG/LLM (DeepSeek) + 类别专用插件 + 双轨门禁校验的汽车质量控制计划提取平台",
@@ -309,8 +334,11 @@ def test_llm_connection(req: LLMConfigActionRequest):
 
 
 @app.post("/api/llm/save-env")
-def save_llm_config_to_env(req: LLMConfigActionRequest):
-    """将当前大模型厂商配置持久化写入服务端 .env 文件"""
+def save_llm_config_to_env(
+    req: LLMConfigActionRequest,
+    admin_user: UserResponse = Depends(get_admin_user),
+):
+    """将当前大模型厂商配置持久化写入服务端 .env 文件（仅系统管理员 admin 允许操作）"""
     env_path = ROOT_DIR / ".env"
     try:
         persist_llm_config_to_env(
@@ -457,7 +485,10 @@ async def extract_from_uploaded_document(
     try:
         manual_cat = category if category != "auto" else None
         if mode == "char_list":
-            pipeline = StandardExtractorPipeline(llm_callable=llm_client.extract_characteristic_list_json)
+            pipeline = StandardExtractorPipeline(
+                llm_callable=llm_client.extract_characteristic_list_json,
+                user_id=current_user.id,
+            )
             package = pipeline.run_characteristic_list(
                 file_name=file.filename or "standard.pdf",
                 content=parsed_text,
@@ -465,7 +496,10 @@ async def extract_from_uploaded_document(
                 refiner=llm_client.refine_characteristics_with_feedback,
             )
         else:
-            pipeline = StandardExtractorPipeline(llm_callable=llm_client.extract_check_items_json)
+            pipeline = StandardExtractorPipeline(
+                llm_callable=llm_client.extract_check_items_json,
+                user_id=current_user.id,
+            )
             package = pipeline.run(
                 file_name=file.filename or "standard.pdf",
                 content=parsed_text,
@@ -489,9 +523,9 @@ async def extract_from_uploaded_document(
 
 
 @app.get("/api/templates")
-def list_templates():
-    """获取所有提示词模板（公共基础模板 + 四类专用插件）"""
-    builder = PromptBuilder()
+def list_templates(current_user: Optional[UserResponse] = Depends(get_current_user_optional)):
+    """获取所有提示词模板（公共基础模板 + 四类专用插件，支持用户隔离与定制标识）"""
+    builder = PromptBuilder(user_id=current_user.id if current_user else None)
     return {
         "templates": builder.list_all_templates(),
         "json_schema_instruction": JSON_SCHEMA_INSTRUCTION.strip(),
@@ -499,9 +533,13 @@ def list_templates():
 
 
 @app.put("/api/templates/{template_key}")
-def update_template(template_key: str, req: TemplateUpdateRequest):
-    """保存修改后的提示词模板内容"""
-    builder = PromptBuilder()
+def update_template(
+    template_key: str,
+    req: TemplateUpdateRequest,
+    current_user: Optional[UserResponse] = Depends(get_current_user_optional),
+):
+    """保存修改后的提示词模板内容（若已登录则隔离写入用户表，未登录降级至系统基线）"""
+    builder = PromptBuilder(user_id=current_user.id if current_user else None)
     try:
         updated = builder.save_template(template_key, req.content)
         return updated
@@ -512,9 +550,12 @@ def update_template(template_key: str, req: TemplateUpdateRequest):
 
 
 @app.post("/api/templates/{template_key}/reset")
-def reset_template(template_key: str):
-    """将指定提示词模板恢复为系统默认内容"""
-    builder = PromptBuilder()
+def reset_template(
+    template_key: str,
+    current_user: Optional[UserResponse] = Depends(get_current_user_optional),
+):
+    """将指定提示词模板恢复为系统默认内容（清除用户级自定义覆盖）"""
+    builder = PromptBuilder(user_id=current_user.id if current_user else None)
     try:
         reset_data = builder.reset_template(template_key)
         return reset_data
@@ -602,9 +643,12 @@ def reset_lexicon_keywords(req: LexiconResetRequest):
 
 
 @app.post("/api/preview-prompt")
-def preview_prompt(req: PreviewPromptRequest):
+def preview_prompt(
+    req: PreviewPromptRequest,
+    current_user: Optional[UserResponse] = Depends(get_current_user_optional),
+):
     classifier = StandardClassifier()
-    builder = PromptBuilder()
+    builder = PromptBuilder(user_id=current_user.id if current_user else None)
     try:
         if req.mode == "char_list":
             prompt = builder.build_characteristic_list_prompt(context_text=req.content)
@@ -660,11 +704,17 @@ def run_extraction(
     try:
         if req.mode == "char_list":
             if use_llm:
-                pipeline = StandardExtractorPipeline(llm_callable=llm_client.extract_characteristic_list_json)
+                pipeline = StandardExtractorPipeline(
+                    llm_callable=llm_client.extract_characteristic_list_json,
+                    user_id=current_user.id,
+                )
                 engine_label = f"{llm_client.provider_short_name} API ({llm_client.model}) [特性清单模式]"
                 refiner = llm_client.refine_characteristics_with_feedback
             else:
-                pipeline = StandardExtractorPipeline(llm_callable=None)
+                pipeline = StandardExtractorPipeline(
+                    llm_callable=None,
+                    user_id=current_user.id,
+                )
                 engine_label = "内置结构化基准引擎 (离线免Key) [特性清单模式]"
                 refiner = None
             package = pipeline.run_characteristic_list(
@@ -675,10 +725,16 @@ def run_extraction(
             )
         else:
             if use_llm:
-                pipeline = StandardExtractorPipeline(llm_callable=llm_client.extract_check_items_json)
+                pipeline = StandardExtractorPipeline(
+                    llm_callable=llm_client.extract_check_items_json,
+                    user_id=current_user.id,
+                )
                 engine_label = f"{llm_client.provider_short_name} API ({llm_client.model})"
             else:
-                pipeline = StandardExtractorPipeline(llm_callable=None)
+                pipeline = StandardExtractorPipeline(
+                    llm_callable=None,
+                    user_id=current_user.id,
+                )
                 engine_label = "内置结构化基准引擎 (离线免Key)"
 
             package = pipeline.run(

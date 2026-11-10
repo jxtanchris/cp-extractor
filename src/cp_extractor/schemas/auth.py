@@ -13,7 +13,7 @@ class UserBase(BaseModel):
 
 
 class UserRegisterRequest(UserBase):
-    password: str = Field(..., min_length=6, max_length=128, description="登录密码 (至少6位)")
+    password: str = Field(..., min_length=5, max_length=128, description="登录密码 (至少5位)")
 
 
 class UserLoginRequest(BaseModel):
@@ -28,6 +28,7 @@ class UserResponse(BaseModel):
     created_at: str = Field(..., description="账号注册时间")
     last_login_at: Optional[str] = Field(default=None, description="最后登录时间")
     is_active: bool = Field(default=True, description="账号是否启用")
+    is_admin: bool = Field(default=False, description="是否具备系统管理员权限")
 
 
 class TokenResponse(BaseModel):

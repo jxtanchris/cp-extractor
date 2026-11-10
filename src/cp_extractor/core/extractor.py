@@ -35,9 +35,15 @@ class StandardExtractorPipeline:
         llm_callable: Optional[Callable[[str], str]] = None,
         llm_refiner: Optional[Callable[[str, List[dict], List[str], str], List[dict]]] = None,
         chunk_char_limit: int = DEFAULT_CHUNK_CHAR_LIMIT,
+        user_id: Optional[int] = None,
+        prompt_builder: Optional[PromptBuilder] = None,
     ):
         self.classifier = StandardClassifier()
-        self.prompt_builder = PromptBuilder(templates_dir=templates_dir)
+        if prompt_builder is not None:
+            self.prompt_builder = prompt_builder
+        else:
+            self.prompt_builder = PromptBuilder(templates_dir=templates_dir, user_id=user_id)
+        self.user_id = user_id
         self.validator = QualityGateValidator()
         self.llm_callable = llm_callable
         # 若传入的 llm_callable 是 DeepSeekClient.extract_check_items_json 绑定方法，自动挂载其 refine_items_with_feedback

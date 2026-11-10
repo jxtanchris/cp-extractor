@@ -210,3 +210,136 @@ def test_unauthenticated_requests_blocked_with_401():
     )
     # 鉴权通过（返回 200）
     assert auth_ext_resp.status_code == 200
+
+
+def test_default_admin_login_and_api_key_permission(tmp_path, monkeypatch):
+    """
+    测试默认管理员账号与 API Key 修改权限拦截：
+    1. 默认管理员账号密码 admin/admin 开箱即用
+    2. 普通用户尝试保存 API Key 到服务端环境被 403 严格拦截
+    3. 仅管理员账号允许调用 /api/llm/save-env 修改服务端 API Key
+    """
+    # 1. 默认 admin/admin 登录
+    admin_login = client.post("/api/auth/login", json={"username": "admin", "password": "admin"})
+    assert admin_login.status_code == 200, f"admin 登录失败: {admin_login.text}"
+    admin_data = admin_login.json()
+    admin_token = admin_data["access_token"]
+    assert admin_data["user"]["username"] == "admin"
+    assert admin_data["user"]["is_admin"] is True
+
+    admin_headers = {"Authorization": f"Bearer {admin_token}"}
+
+    # 2. 普通用户注册与尝试修改 API Key
+    normal_uname = f"engineer_{int(time.time() * 1000)}"
+    reg_normal = client.post("/api/auth/register", json={"username": normal_uname, "password": "password123"})
+    normal_token = reg_normal.json()["access_token"]
+    assert reg_normal.json()["user"]["is_admin"] is False
+    normal_headers = {"Authorization": f"Bearer {normal_token}"}
+
+    key_payload = {
+        "provider": "deepseek",
+        "api_key": "sk-new-admin-test-key",
+        "base_url": "https://api.deepseek.com",
+        "model": "deepseek-chat",
+        "temperature": 0.0,
+    }
+
+    # 未登录访问修改 API Key -> 401
+    unauth_resp = client.post("/api/llm/save-env", json=key_payload)
+    assert unauth_resp.status_code == 401
+
+    # 普通用户修改 API Key -> 403 Forbidden
+    forbidden_resp = client.post("/api/llm/save-env", json=key_payload, headers=normal_headers)
+    assert forbidden_resp.status_code == 403
+    assert "仅系统管理员" in forbidden_resp.json()["detail"]
+
+    # 3. 管理员成功修改 API Key
+    # 使用临时文件测试写入避免污染生产环境 .env
+    fake_env = tmp_path / ".env"
+    fake_env.write_text("DEEPSEEK_API_KEY=sk-init\n", encoding="utf-8")
+    import sys
+    app_module = sys.modules["src.cp_extractor.api.app"]
+    monkeypatch.setattr(app_module, "ROOT_DIR", tmp_path)
+
+    admin_save_resp = client.post("/api/llm/save-env", json=key_payload, headers=admin_headers)
+    assert admin_save_resp.status_code == 200
+    assert admin_save_resp.json()["saved"] is True
+    assert "DEEPSEEK_API_KEY=sk-new-admin-test-key" in fake_env.read_text(encoding="utf-8")
+
+
+def test_user_prompt_template_isolation_and_fallback():
+    """
+    Phase 2 专项测试：用户提示词两级继承与隔离机制 (System Default + User Override)
+    1. 用户 A 修改公共基础模板，只对用户 A 生效
+    2. 用户 B 获取的仍是系统官方默认模板，未受用户 A 影响
+    3. 磁盘文件 templates/base_template.md 保持原始干净，不被用户微调篡改
+    4. 用户 A 在组装/预览提示词时自动应用个人定制版本；用户 B 应用官方版本
+    5. 用户 A 执行 reset 恢复默认后，清除用户级覆盖并回退至系统官方版本
+    """
+    ts = int(time.time() * 1000)
+    user_a = f"engineer_a_{ts}"
+    user_b = f"engineer_b_{ts}"
+
+    token_a = client.post("/api/auth/register", json={"username": user_a, "password": "password123"}).json()["access_token"]
+    token_b = client.post("/api/auth/register", json={"username": user_b, "password": "password123"}).json()["access_token"]
+
+    headers_a = {"Authorization": f"Bearer {token_a}"}
+    headers_b = {"Authorization": f"Bearer {token_b}"}
+
+    # 1. 初始状态：用户 A 与 用户 B 查看 base 模板，均为官方默认且未定制
+    list_a = client.get("/api/templates", headers=headers_a).json()["templates"]
+    list_b = client.get("/api/templates", headers=headers_b).json()["templates"]
+    base_a = next(t for t in list_a if t["key"] == "base")
+    base_b = next(t for t in list_b if t["key"] == "base")
+    assert base_a["content"] == base_b["content"]
+    assert base_a["is_user_custom"] is False
+    assert base_b["is_user_custom"] is False
+    original_official_content = base_a["content"]
+
+    # 2. 用户 A 定制修改 base 模板
+    custom_content_a = original_official_content + "\n\n【工程师 A 专属准入准则】必须加测抗疲劳极限指标！"
+    put_a = client.put("/api/templates/base", json={"content": custom_content_a}, headers=headers_a)
+    assert put_a.status_code == 200
+    assert put_a.json()["is_user_custom"] is True
+    assert put_a.json()["is_modified"] is True
+
+    # 3. 隔离性验证：
+    # 用户 A 再次查询，显示个性化定制内容
+    a_new_list = client.get("/api/templates", headers=headers_a).json()["templates"]
+    a_new_base = next(t for t in a_new_list if t["key"] == "base")
+    assert "工程师 A 专属准入准则" in a_new_base["content"]
+    assert a_new_base["is_user_custom"] is True
+
+    # 用户 B 查询，依然是官方默认内容！不受任何污染！
+    b_new_list = client.get("/api/templates", headers=headers_b).json()["templates"]
+    b_new_base = next(t for t in b_new_list if t["key"] == "base")
+    assert "工程师 A 专属准入准则" not in b_new_base["content"]
+    assert b_new_base["content"] == original_official_content
+    assert b_new_base["is_user_custom"] is False
+
+    # 4. 预览提示词自动隔离验证
+    preview_a = client.post(
+        "/api/preview-prompt",
+        json={"content": "3.1 尺寸 20 ± 0.2 mm", "manual_category": "tolerance"},
+        headers=headers_a,
+    ).json()["prompt"]
+    preview_b = client.post(
+        "/api/preview-prompt",
+        json={"content": "3.1 尺寸 20 ± 0.2 mm", "manual_category": "tolerance"},
+        headers=headers_b,
+    ).json()["prompt"]
+    assert "工程师 A 专属准入准则" in preview_a
+    assert "工程师 A 专属准入准则" not in preview_b
+
+    # 5. 用户 A 恢复出厂设置
+    reset_a = client.post("/api/templates/base/reset", headers=headers_a)
+    assert reset_a.status_code == 200
+    assert reset_a.json()["is_user_custom"] is False
+    assert "工程师 A 专属准入准则" not in reset_a.json()["content"]
+
+    # 6. 恢复后，用户 A 再次查询，已彻底回退至官方默认
+    a_reset_list = client.get("/api/templates", headers=headers_a).json()["templates"]
+    a_reset_base = next(t for t in a_reset_list if t["key"] == "base")
+    assert a_reset_base["content"] == original_official_content
+    assert a_reset_base["is_user_custom"] is False
+

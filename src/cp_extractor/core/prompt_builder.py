@@ -4,9 +4,11 @@
 """
 
 from pathlib import Path
+import sqlite3
 from typing import Optional, Dict, Any, List, Union
 import yaml
 
+from .auth import DEFAULT_APP_DB_PATH
 from .feedback_learner import FeedbackRuleLearner
 
 
@@ -163,7 +165,12 @@ DEFAULT_TEMPLATES: Dict[str, Dict[str, str]] = {
 
 
 class PromptBuilder:
-    def __init__(self, templates_dir: Optional[Path] = None):
+    def __init__(
+        self,
+        templates_dir: Optional[Path] = None,
+        user_id: Optional[int] = None,
+        db_path: Optional[Path] = None,
+    ):
         if templates_dir is None:
             # 默认为项目根目录下的 templates 目录
             self.templates_dir = Path(__file__).resolve().parent.parent.parent.parent / "templates"
@@ -171,6 +178,44 @@ class PromptBuilder:
             self.templates_dir = Path(templates_dir)
 
         self.plugins_dir = self.templates_dir / "plugins"
+        self.user_id = user_id
+        self.db_path = Path(db_path) if db_path else DEFAULT_APP_DB_PATH
+        if self.user_id is not None:
+            self._init_user_template_tables()
+
+    def _connect_db(self) -> sqlite3.Connection:
+        self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        conn = sqlite3.connect(str(self.db_path))
+        conn.row_factory = sqlite3.Row
+        return conn
+
+    def _init_user_template_tables(self) -> None:
+        with self._connect_db() as conn:
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS user_templates (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL,
+                    template_key TEXT NOT NULL,
+                    content TEXT NOT NULL,
+                    updated_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+                    UNIQUE(user_id, template_key)
+                )
+                """
+            )
+            conn.commit()
+
+    def _get_user_template_content(self, template_key: str) -> Optional[str]:
+        if self.user_id is None:
+            return None
+        with self._connect_db() as conn:
+            row = conn.execute(
+                "SELECT content FROM user_templates WHERE user_id = ? AND template_key = ?",
+                (self.user_id, template_key),
+            ).fetchone()
+            if row:
+                return row["content"]
+        return None
 
     def _load_template_file(self, path: Path) -> str:
         if not path.exists():
@@ -191,14 +236,20 @@ class PromptBuilder:
         return {}, text
 
     def get_base_template(self) -> str:
+        custom_content = self._get_user_template_content("base")
+        if custom_content is not None:
+            return custom_content.strip()
         base_path = self.templates_dir / "base_template.md"
         return self._load_template_file(base_path)
 
     def get_plugin(self, category_key: str) -> tuple[Dict, str]:
         """
         加载指定类别的插件指令。
-        category_key 可以是: tolerance, material, process, appearance_performance
+        优先读取当前用户的定制版本；若无定制则回退至系统官方插件文件。
         """
+        custom_content = self._get_user_template_content(category_key)
+        if custom_content is not None:
+            return self._parse_frontmatter(custom_content.strip())
         plugin_file = self.plugins_dir / f"{category_key}.md"
         if not plugin_file.exists():
             raise ValueError(f"未找到对应的类别插件: {category_key} (路径: {plugin_file})")
@@ -250,7 +301,11 @@ class PromptBuilder:
         return "\n".join(prompt_parts)
 
     def get_characteristic_list_template(self) -> str:
-        """加载仅特性清单模式模板（文件缺失时回退出厂默认内容）"""
+        """加载仅特性清单模式模板（优先用户定制 -> 磁盘文件 -> 出厂默认内容）"""
+        custom_content = self._get_user_template_content("char_list")
+        if custom_content is not None:
+            _, body = self._parse_frontmatter(custom_content.strip())
+            return body
         path = self.templates_dir / DEFAULT_TEMPLATES["char_list"]["rel_path"]
         if not path.exists():
             return CHAR_LIST_DEFAULT_CONTENT.strip()
@@ -277,11 +332,28 @@ class PromptBuilder:
         return self.templates_dir / DEFAULT_TEMPLATES[key]["rel_path"]
 
     def list_all_templates(self) -> List[Dict[str, Any]]:
-        """返回所有可编辑模板的当前内容与元信息"""
+        """返回所有可编辑模板的当前内容与元信息（支持用户个性化定制状态标识）"""
         items: List[Dict[str, Any]] = []
+        user_overrides = {}
+        if self.user_id is not None:
+            with self._connect_db() as conn:
+                rows = conn.execute(
+                    "SELECT template_key, content FROM user_templates WHERE user_id = ?",
+                    (self.user_id,),
+                ).fetchall()
+                user_overrides = {r["template_key"]: r["content"] for r in rows}
+
         for key, info in DEFAULT_TEMPLATES.items():
             fpath = self._resolve_template_path(key)
-            current = fpath.read_text(encoding="utf-8").strip() if fpath.exists() else info["default_content"]
+            system_default = fpath.read_text(encoding="utf-8").strip() if fpath.exists() else info["default_content"].strip()
+
+            if key in user_overrides:
+                current = user_overrides[key].strip()
+                is_custom = True
+            else:
+                current = system_default
+                is_custom = False
+
             items.append({
                 "key": key,
                 "title": info["title"],
@@ -290,29 +362,74 @@ class PromptBuilder:
                 "content": current,
                 "default_content": info["default_content"],
                 "is_modified": current != info["default_content"].strip(),
+                "is_user_custom": is_custom,
             })
         return items
 
     def save_template(self, key: str, content: str) -> Dict[str, Any]:
-        """保存用户编辑后的模板内容到磁盘"""
+        """保存模板内容（若指定了 user_id 则保存至用户隔离表，不污染系统文件；未指定则降级至磁盘文件）"""
+        if key not in DEFAULT_TEMPLATES:
+            raise ValueError(f"不支持的模板标识: {key}")
         cleaned = content.strip()
         if not cleaned:
             raise ValueError("模板内容不能为空")
-        fpath = self._resolve_template_path(key)
-        fpath.parent.mkdir(parents=True, exist_ok=True)
-        fpath.write_text(cleaned + "\n", encoding="utf-8")
+
         info = DEFAULT_TEMPLATES[key]
-        return {
-            "key": key,
-            "title": info["title"],
-            "rel_path": f"templates/{info['rel_path']}",
-            "content": cleaned,
-            "is_modified": cleaned != info["default_content"].strip(),
-        }
+        if self.user_id is not None:
+            with self._connect_db() as conn:
+                conn.execute(
+                    """
+                    INSERT INTO user_templates (user_id, template_key, content, updated_at)
+                    VALUES (?, ?, ?, datetime('now', 'localtime'))
+                    ON CONFLICT(user_id, template_key)
+                    DO UPDATE SET content = excluded.content, updated_at = datetime('now', 'localtime')
+                    """,
+                    (self.user_id, key, cleaned),
+                )
+                conn.commit()
+            return {
+                "key": key,
+                "title": info["title"],
+                "rel_path": f"templates/{info['rel_path']}",
+                "content": cleaned,
+                "is_modified": cleaned != info["default_content"].strip(),
+                "is_user_custom": True,
+            }
+        else:
+            fpath = self._resolve_template_path(key)
+            fpath.parent.mkdir(parents=True, exist_ok=True)
+            fpath.write_text(cleaned + "\n", encoding="utf-8")
+            return {
+                "key": key,
+                "title": info["title"],
+                "rel_path": f"templates/{info['rel_path']}",
+                "content": cleaned,
+                "is_modified": cleaned != info["default_content"].strip(),
+                "is_user_custom": False,
+            }
 
     def reset_template(self, key: str) -> Dict[str, Any]:
-        """将指定模板恢复为系统出厂默认内容"""
+        """将指定模板恢复为系统出厂默认内容（清除用户级自定义覆盖）"""
         if key not in DEFAULT_TEMPLATES:
             raise ValueError(f"不支持的模板标识: {key}")
-        default_text = DEFAULT_TEMPLATES[key]["default_content"]
-        return self.save_template(key, default_text)
+        info = DEFAULT_TEMPLATES[key]
+        if self.user_id is not None:
+            with self._connect_db() as conn:
+                conn.execute(
+                    "DELETE FROM user_templates WHERE user_id = ? AND template_key = ?",
+                    (self.user_id, key),
+                )
+                conn.commit()
+            fpath = self._resolve_template_path(key)
+            system_text = fpath.read_text(encoding="utf-8").strip() if fpath.exists() else info["default_content"].strip()
+            return {
+                "key": key,
+                "title": info["title"],
+                "rel_path": f"templates/{info['rel_path']}",
+                "content": system_text,
+                "is_modified": system_text != info["default_content"].strip(),
+                "is_user_custom": False,
+            }
+        else:
+            default_text = info["default_content"]
+            return self.save_template(key, default_text)

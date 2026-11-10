@@ -123,21 +123,42 @@ class AuthManager:
                     display_name TEXT DEFAULT '',
                     created_at TEXT NOT NULL,
                     last_login_at TEXT DEFAULT NULL,
-                    is_active INTEGER NOT NULL DEFAULT 1
+                    is_active INTEGER NOT NULL DEFAULT 1,
+                    is_admin INTEGER NOT NULL DEFAULT 0
                 )
                 """
             )
+            # 兼容已有 users 表动态平滑迁移 is_admin 列
+            existing_cols = {r["name"] for r in conn.execute("PRAGMA table_info(users)").fetchall()}
+            if "is_admin" not in existing_cols:
+                conn.execute("ALTER TABLE users ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0")
+
+            # 默认系统管理员账号初始化：admin / admin
+            admin_row = conn.execute("SELECT id FROM users WHERE username = 'admin'").fetchone()
+            if not admin_row:
+                pwd_hash, salt = hash_password("admin")
+                now_str = datetime.now(timezone.utc).isoformat()
+                conn.execute(
+                    """
+                    INSERT INTO users (username, password_hash, salt, display_name, created_at, is_active, is_admin)
+                    VALUES ('admin', ?, ?, '系统管理员', ?, 1, 1)
+                    """,
+                    (pwd_hash, salt, now_str),
+                )
+            else:
+                conn.execute("UPDATE users SET is_admin = 1 WHERE username = 'admin'")
+
             conn.commit()
 
     def register_user(self, username: str, password: str, display_name: str = "") -> UserResponse:
-        """注册新用户"""
+        """注册新用户（默认普通权限）"""
         clean_username = username.strip()
         if not clean_username or len(clean_username) < 3:
             raise ValueError("用户名至少需要 3 个字符")
         if not re.match(r"^[a-zA-Z0-9_\-\u4e00-\u9fa5]+$", clean_username):
             raise ValueError("用户名只能包含中文字符、字母、数字、下划线及连字符")
-        if len(password) < 6:
-            raise ValueError("密码长度至少需要 6 位")
+        if len(password) < 5:
+            raise ValueError("密码长度至少需要 5 位")
 
         pwd_hash, salt = hash_password(password)
         now_str = datetime.now(timezone.utc).isoformat()
@@ -147,8 +168,8 @@ class AuthManager:
             try:
                 cursor.execute(
                     """
-                    INSERT INTO users (username, password_hash, salt, display_name, created_at, is_active)
-                    VALUES (?, ?, ?, ?, ?, 1)
+                    INSERT INTO users (username, password_hash, salt, display_name, created_at, is_active, is_admin)
+                    VALUES (?, ?, ?, ?, ?, 1, 0)
                     """,
                     (clean_username, pwd_hash, salt, display_name.strip(), now_str),
                 )
@@ -164,6 +185,7 @@ class AuthManager:
             created_at=now_str,
             last_login_at=None,
             is_active=True,
+            is_admin=False,
         )
 
     def authenticate_user(self, username: str, password: str) -> UserResponse:
@@ -189,6 +211,8 @@ class AuthManager:
             )
             conn.commit()
 
+        is_admin_flag = bool(row["is_admin"]) if "is_admin" in row.keys() else False
+
         return UserResponse(
             id=row["id"],
             username=row["username"],
@@ -196,6 +220,7 @@ class AuthManager:
             created_at=row["created_at"],
             last_login_at=now_str,
             is_active=bool(row["is_active"]),
+            is_admin=is_admin_flag,
         )
 
     def get_user_by_id(self, user_id: int) -> Optional[UserResponse]:
@@ -204,6 +229,7 @@ class AuthManager:
             row = conn.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
             if not row:
                 return None
+            is_admin_flag = bool(row["is_admin"]) if "is_admin" in row.keys() else False
             return UserResponse(
                 id=row["id"],
                 username=row["username"],
@@ -211,6 +237,7 @@ class AuthManager:
                 created_at=row["created_at"],
                 last_login_at=row["last_login_at"],
                 is_active=bool(row["is_active"]),
+                is_admin=is_admin_flag,
             )
 
     def issue_token_for_user(self, user: UserResponse, expires_in_seconds: int = 7 * 86400) -> str:
