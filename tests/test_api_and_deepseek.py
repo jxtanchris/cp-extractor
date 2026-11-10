@@ -86,9 +86,9 @@ def test_extract_and_human_review_workflow():
     assert "learning_event" in rev_resp.json()
 
     # 3. 验证下载接口并清理测试产生的自学习计数
-    dl_resp = client.get(rev_resp.json()["excel_download_url"])
+    dl_resp = client.get(rev_resp.json()["excel_download_url"], headers=headers)
     assert dl_resp.status_code == 200
-    client.post("/api/learning/reset")
+    client.post("/api/learning/reset", headers=headers)
 
 
 def test_deepseek_json_parser_compatibility():
@@ -334,11 +334,14 @@ def test_feedback_rule_learning_auto_promotion_and_auto_apply():
     """
     from src.cp_extractor.core.prompt_builder import PromptBuilder
 
-    client.post("/api/learning/reset")
-    client.put("/api/learning/settings", json={"threshold": 3})
+    headers = _get_auth_headers()
+    me_resp = client.get("/api/auth/me", headers=headers)
+    user_id = me_resp.json()["id"]
+
+    client.post("/api/learning/reset", headers=headers)
+    client.put("/api/learning/settings", json={"threshold": 3}, headers=headers)
 
     try:
-        headers = _get_auth_headers()
         sample_data = client.get("/api/samples/sample_tolerance_iso2768.md").json()
 
         # 初始状态：提取公差标准样本有 10 条正式项，1 条待人工确认项（局部非关键翻边轮廓度）
@@ -413,12 +416,12 @@ def test_feedback_rule_learning_auto_promotion_and_auto_apply():
         assert "自学习规则已自动准入" in (auto_approved.get("notes") or "")
 
         # 验证 2：PromptBuilder 组装的提示词中已自动注入该条自学习规则
-        assembled_prompt = PromptBuilder().build_extraction_prompt("tolerance")
+        assembled_prompt = PromptBuilder(user_id=user_id).build_extraction_prompt("tolerance")
         assert "系统自学习历史人工复核规则" in assembled_prompt
         assert "局部非关键翻边轮廓度" in assembled_prompt
         assert "光学三维扫描仪" in assembled_prompt
     finally:
-        client.post("/api/learning/reset")
+        client.post("/api/learning/reset", headers=headers)
         client.post("/api/lexicon/reset", json={"category": "all"})
 
 

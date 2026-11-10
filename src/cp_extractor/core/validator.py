@@ -44,9 +44,12 @@ class QualityGateValidator:
         self,
         lexicon_db: Optional[LexiconDB] = None,
         feedback_learner: Optional[FeedbackRuleLearner] = None,
+        user_id: Optional[int] = None,
     ):
         self.lexicon_db = lexicon_db or LexiconDB()
-        self.feedback_learner = feedback_learner or FeedbackRuleLearner(db_path=self.lexicon_db.db_path)
+        self.feedback_learner = feedback_learner or FeedbackRuleLearner(
+            db_path=self.lexicon_db.db_path, user_id=user_id
+        )
 
     @staticmethod
     def _contains_term(text: str, term: str) -> bool:

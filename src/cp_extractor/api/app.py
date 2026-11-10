@@ -15,7 +15,7 @@ import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
-from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile, status
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, UploadFile, status
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
@@ -104,6 +104,29 @@ def get_admin_user(
             detail="权限不足：仅系统管理员 (admin) 允许修改 API Key 或调整服务端配置",
         )
     return current_user
+
+
+def get_current_user_from_header_or_query(
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security_scheme),
+    token: Optional[str] = Query(None),
+) -> UserResponse:
+    """双通道鉴权：支持 Header Bearer 与 URL Query 参数 ?token=...，供浏览器新标签预览或下载"""
+    raw_token = credentials.credentials if credentials else token
+    if not raw_token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="必须登录后才能查看或下载文件",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    auth_mgr = AuthManager()
+    try:
+        return auth_mgr.authenticate_token(raw_token)
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=str(e),
+            headers={"WWW-Authenticate": "Bearer"},
+        )
 
 app = FastAPI(
     title="CP-Extractor 标准→控制计划检查项提取系统",
@@ -213,23 +236,31 @@ def _safe_stem(filename: str) -> str:
     return re.sub(r"[^a-zA-Z0-9_\-\u4e00-\u9fa5]", "_", stem) or "standard"
 
 
-def _persist_uploaded_source(filename: str, raw: bytes) -> str:
-    """将用户上传的原始标准文档（如 PDF）持久化到 output/ 目录，返回可直接在浏览器打开并定位页码的 URL"""
+def _persist_uploaded_source(filename: str, raw: bytes, user_id: Optional[int] = None) -> str:
+    """将用户上传的原始标准文档（如 PDF）持久化到用户隔离沙箱目录，返回可直接在浏览器打开并定位页码的 URL"""
     ext = Path(filename).suffix.lower() or ".pdf"
     safe_name = f"{_safe_stem(filename)}_source{ext}"
-    source_path = OUTPUT_DIR / safe_name
+    target_dir = OUTPUT_DIR / "users" / str(user_id) if user_id is not None else OUTPUT_DIR
+    target_dir.mkdir(parents=True, exist_ok=True)
+    source_path = target_dir / safe_name
     source_path.write_bytes(raw)
     return f"/api/source/{safe_name}"
 
 
-def _persist_artifacts(package: Union[ExtractionPackage, CharacteristicListPackage]) -> Dict[str, str]:
+def _persist_artifacts(
+    package: Union[ExtractionPackage, CharacteristicListPackage],
+    user_id: Optional[int] = None,
+) -> Dict[str, str]:
     stem = _safe_stem(package.standard_info.file_name)
     is_char_list = isinstance(package, CharacteristicListPackage)
     json_name = f"{stem}_char_list.json" if is_char_list else f"{stem}_output.json"
     excel_name = f"{stem}_characteristics.xlsx" if is_char_list else f"{stem}_control_plan.xlsx"
 
-    json_path = OUTPUT_DIR / json_name
-    excel_path = OUTPUT_DIR / excel_name
+    target_dir = OUTPUT_DIR / "users" / str(user_id) if user_id is not None else OUTPUT_DIR
+    target_dir.mkdir(parents=True, exist_ok=True)
+
+    json_path = target_dir / json_name
+    excel_path = target_dir / excel_name
 
     json_path.write_text(
         json.dumps(package.model_dump(mode="json"), ensure_ascii=False, indent=2),
@@ -245,6 +276,47 @@ def _persist_artifacts(package: Union[ExtractionPackage, CharacteristicListPacka
         "json_download_url": f"/api/download/{json_name}",
         "excel_download_url": f"/api/download/{excel_name}",
     }
+
+
+def _locate_user_file(filename: str, current_user: UserResponse) -> Path:
+    """
+    安全定位文件并实施沙箱隔离与越权校验（IDOR 防护）：
+    1. 严格过滤路径穿越字符（Path Traversal 防护）；
+    2. 优先在当前用户的沙箱目录 output/users/{user_id}/ 中查找；
+    3. 若未找到：
+       - 若当前用户为管理员 (admin)，允许跨用户沙箱查找（审计管理特权）；
+       - 若为普通用户：
+         * 若该文件属于公共/全局 output/ 目录（如系统基准样本），允许访问；
+         * 若该文件存在于其他用户的私有沙箱目录中，判定为非法越权访问，强行拦截返回 HTTP 403 Forbidden；
+         * 否则返回 HTTP 404 Not Found。
+    """
+    safe_name = Path(filename).name
+    if not safe_name or safe_name in (".", "..") or "/" in filename or "\\" in filename:
+        raise HTTPException(status_code=400, detail="非法的文件名格式或路径穿越尝试")
+
+    user_file = OUTPUT_DIR / "users" / str(current_user.id) / safe_name
+    if user_file.exists():
+        return user_file
+
+    global_file = OUTPUT_DIR / safe_name
+    if global_file.exists():
+        return global_file
+
+    # 检查是否属于其他用户的私有沙箱文件（检测水平越权 IDOR）
+    users_root = OUTPUT_DIR / "users"
+    if users_root.exists():
+        for u_dir in users_root.iterdir():
+            if u_dir.is_dir() and u_dir.name != str(current_user.id):
+                target_other = u_dir / safe_name
+                if target_other.exists():
+                    if current_user.is_admin:
+                        return target_other  # 管理员具备只读审计放行权限
+                    raise HTTPException(
+                        status_code=status.HTTP_403_FORBIDDEN,
+                        detail="越权访问拦截：无权查看或下载其他工程师的专属文件",
+                    )
+
+    raise HTTPException(status_code=404, detail=f"文件不存在: {safe_name}")
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -416,7 +488,7 @@ async def upload_standard(
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-    source_file_url = _persist_uploaded_source(file.filename or "uploaded.txt", raw)
+    source_file_url = _persist_uploaded_source(file.filename or "uploaded.txt", raw, user_id=current_user.id)
     classifier = StandardClassifier()
     key, cat_enum = classifier.classify(content)
     return {
@@ -466,7 +538,7 @@ async def extract_from_uploaded_document(
             detail="无法从该文件中提取出有效文本（如果是扫描件图片型 PDF，请先经 OCR/MinerU 转换）",
         )
 
-    source_file_url = _persist_uploaded_source(file.filename or "standard.pdf", raw)
+    source_file_url = _persist_uploaded_source(file.filename or "standard.pdf", raw, user_id=current_user.id)
 
     # 严格使用服务端环境变量配置的大模型 API Key，禁止用户各自配置个人 Key
     llm_client = LLMClient(
@@ -506,7 +578,7 @@ async def extract_from_uploaded_document(
                 manual_category=manual_cat,
             )
         package.standard_info.source_file_url = source_file_url
-        downloads = _persist_artifacts(package)
+        downloads = _persist_artifacts(package, user_id=current_user.id)
         return {
             "mode": mode,
             "engine_used": llm_client.display_label,
@@ -742,7 +814,7 @@ def run_extraction(
                 content=req.content,
                 manual_category=req.manual_category or None,
             )
-        downloads = _persist_artifacts(package)
+        downloads = _persist_artifacts(package, user_id=current_user.id)
         return {
             "mode": req.mode,
             "engine_used": engine_label,
@@ -771,7 +843,7 @@ def approve_or_reject_review_item(
                 final_char.needs_human_review = False
                 char_package.characteristics.append(final_char)
             char_package.refresh_summary()
-            downloads = _persist_artifacts(char_package)
+            downloads = _persist_artifacts(char_package, user_id=current_user.id)
             return {
                 "package": char_package.model_dump(mode="json"),
                 "learning_event": None,
@@ -792,8 +864,8 @@ def approve_or_reject_review_item(
             final_item.needs_human_review = False
             package.check_items.append(final_item)
 
-        # 记录质量工程师的人工决策至自学习引擎（满 N 次自动改写门禁与提示词规则）
-        learner = FeedbackRuleLearner()
+        # 记录质量工程师的人工决策至自学习引擎（满 N 次自动改写门禁与提示词规则，隔离至当前用户）
+        learner = FeedbackRuleLearner(user_id=current_user.id)
         learning_event = learner.record_review_decision(
             standard_category=package.standard_info.standard_category,
             original_item=orig_item,
@@ -802,7 +874,7 @@ def approve_or_reject_review_item(
         )
 
         package.refresh_summary()
-        downloads = _persist_artifacts(package)
+        downloads = _persist_artifacts(package, user_id=current_user.id)
         return {
             "package": package.model_dump(mode="json"),
             "learning_event": learning_event,
@@ -813,31 +885,39 @@ def approve_or_reject_review_item(
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"审核处理失败: {e}")
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"审核操作失败: {e}")
 
 
 @app.get("/api/learning/rules")
-def list_learned_rules():
+def list_learned_rules(
+    current_user: Optional[UserResponse] = Depends(get_current_user_optional),
+):
     """查询人工复核自学习规则列表、学习中候选进度与当前触发阈值"""
-    learner = FeedbackRuleLearner()
+    user_id = None if (current_user and current_user.is_admin) else (current_user.id if current_user else 0)
+    learner = FeedbackRuleLearner(user_id=user_id)
     return learner.get_full_learning_payload()
 
 
 @app.put("/api/learning/settings")
-def update_learning_settings(req: LearningSettingsRequest):
+def update_learning_settings(
+    req: LearningSettingsRequest,
+    current_user: Optional[UserResponse] = Depends(get_current_user_optional),
+):
     """修改自动更改规则的累计次数阈值（如 2 次、3 次、5 次）"""
-    learner = FeedbackRuleLearner()
+    user_id = None if (current_user and current_user.is_admin) else (current_user.id if current_user else 0)
+    learner = FeedbackRuleLearner(user_id=user_id)
     learner.set_threshold(req.threshold)
     return learner.get_full_learning_payload()
 
 
 @app.put("/api/learning/rules/{rule_id}")
-def update_learned_rule(rule_id: int, req: LearnedRuleUpdateRequest):
+def update_learned_rule(
+    rule_id: int,
+    req: LearnedRuleUpdateRequest,
+    current_user: Optional[UserResponse] = Depends(get_current_user_optional),
+):
     """手动启用/暂停某条自学习规则，或修改其自动回填的检查方法与判定准则"""
-    learner = FeedbackRuleLearner()
+    user_id = None if (current_user and current_user.is_admin) else (current_user.id if current_user else 0)
+    learner = FeedbackRuleLearner(user_id=user_id)
     try:
         updated = learner.update_rule(
             rule_id=rule_id,
@@ -862,9 +942,13 @@ def update_learned_rule(rule_id: int, req: LearnedRuleUpdateRequest):
 
 
 @app.delete("/api/learning/rules/{rule_id}")
-def delete_learned_rule(rule_id: int):
+def delete_learned_rule(
+    rule_id: int,
+    current_user: Optional[UserResponse] = Depends(get_current_user_optional),
+):
     """删除并回滚某条自学习规则"""
-    learner = FeedbackRuleLearner()
+    user_id = None if (current_user and current_user.is_admin) else (current_user.id if current_user else 0)
+    learner = FeedbackRuleLearner(user_id=user_id)
     deleted = learner.delete_rule(rule_id)
     if not deleted:
         raise HTTPException(status_code=404, detail=f"自学习规则 ID={rule_id} 不存在")
@@ -875,20 +959,25 @@ def delete_learned_rule(rule_id: int):
 
 
 @app.post("/api/learning/reset")
-def reset_all_learned_rules():
+def reset_all_learned_rules(
+    current_user: Optional[UserResponse] = Depends(get_current_user_optional),
+):
     """清空所有自学习规则与历史计数"""
-    learner = FeedbackRuleLearner()
+    user_id = None if (current_user and current_user.is_admin) else (current_user.id if current_user else 0)
+    learner = FeedbackRuleLearner(user_id=user_id)
     learner.reset_all_rules()
     return learner.get_full_learning_payload()
 
 
 @app.get("/api/source/{filename}")
-def view_source_file(filename: str):
-    """在线预览上传的源标准文档（如 PDF），使用 inline 模式以支持浏览器直接定位 #page=N 页码"""
-    safe_name = Path(filename).name
-    target = OUTPUT_DIR / safe_name
+def view_source_file(
+    filename: str,
+    current_user: UserResponse = Depends(get_current_user_from_header_or_query),
+):
+    """在线预览上传的源标准文档（如 PDF），使用 inline 模式以支持浏览器直接定位 #page=N 页码，具备用户防越权沙箱防护"""
+    target = _locate_user_file(filename, current_user)
     if not target.exists():
-        raise HTTPException(status_code=404, detail=f"源文件不存在: {safe_name}")
+        raise HTTPException(status_code=404, detail=f"源文件不存在: {target.name}")
     ext = target.suffix.lower()
     media_type = "application/pdf" if ext == ".pdf" else None
     return FileResponse(
@@ -899,9 +988,12 @@ def view_source_file(filename: str):
 
 
 @app.get("/api/download/{filename}")
-def download_artifact(filename: str):
-    safe_name = Path(filename).name
-    target = OUTPUT_DIR / safe_name
+def download_artifact(
+    filename: str,
+    current_user: UserResponse = Depends(get_current_user_from_header_or_query),
+):
+    """下载导出的产物文件（Excel/JSON/XML），具备用户防越权沙箱防护"""
+    target = _locate_user_file(filename, current_user)
     if not target.exists():
-        raise HTTPException(status_code=404, detail=f"文件不存在: {safe_name}")
-    return FileResponse(path=target, filename=safe_name)
+        raise HTTPException(status_code=404, detail=f"文件不存在: {target.name}")
+    return FileResponse(path=target, filename=target.name)

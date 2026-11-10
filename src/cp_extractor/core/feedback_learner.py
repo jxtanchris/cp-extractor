@@ -38,13 +38,14 @@ PLUGIN_KEY_TO_CATEGORY_LABEL = {
 
 
 class FeedbackRuleLearner:
-    """基于 SQLite 的人工复核自学习与规则演进管理器"""
+    """基于 SQLite 的人工复核自学习与规则演进管理器（支持用户级隔离与多租户经验沙箱）"""
 
     DEFAULT_THRESHOLD = 3
 
-    def __init__(self, db_path: Optional[Path] = None):
+    def __init__(self, db_path: Optional[Path] = None, user_id: Optional[int] = None):
         self.db_path = Path(db_path) if db_path else DEFAULT_DB_PATH
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        self.user_id = user_id
         self._init_tables()
 
     def _connect(self) -> sqlite3.Connection:
@@ -95,10 +96,12 @@ class FeedbackRuleLearner:
                 )
                 """
             )
-            # 兼容已有 SQLite 表平滑迁移新增 v2.0 IATF 16949 字段列
+            # 兼容已有 SQLite 表平滑迁移新增 v2.0 IATF 16949 字段列与多租户 user_id
             existing_cols = {
                 r["name"] for r in conn.execute("PRAGMA table_info(learned_rules)").fetchall()
             }
+            if "user_id" not in existing_cols:
+                conn.execute("ALTER TABLE learned_rules ADD COLUMN user_id INTEGER NOT NULL DEFAULT 0")
             for col_name in (
                 "learned_special_char_class",
                 "learned_sample_frequency",
@@ -141,9 +144,11 @@ class FeedbackRuleLearner:
         return plugin_key, label
 
     @classmethod
-    def build_pattern_key(cls, raw_category: str, characteristic_name: str) -> str:
+    def build_pattern_key(cls, raw_category: str, characteristic_name: str, user_id: Optional[int] = None) -> str:
         plugin_key, _ = cls.resolve_category_pair(raw_category)
         norm_name = cls.normalize_characteristic_name(characteristic_name)
+        if user_id:
+            return f"u{user_id}:{plugin_key}::{norm_name}"
         return f"{plugin_key}::{norm_name}"
 
     def get_threshold(self) -> int:
@@ -210,7 +215,7 @@ class FeedbackRuleLearner:
 
         final_item = updated_item or original_item
         plugin_key, category_label = self.resolve_category_pair(standard_category)
-        pattern_key = self.build_pattern_key(plugin_key, final_item.characteristic_name)
+        pattern_key = self.build_pattern_key(plugin_key, final_item.characteristic_name, user_id=self.user_id)
         threshold = self.get_threshold()
 
         spec_val = (final_item.specification or "").strip()
@@ -239,14 +244,15 @@ class FeedbackRuleLearner:
                 cursor = conn.execute(
                     """
                     INSERT INTO learned_rules (
-                        pattern_key, plugin_key, standard_category, characteristic_name,
+                        user_id, pattern_key, plugin_key, standard_category, characteristic_name,
                         action, approve_count, reject_count,
                         learned_special_char_class, learned_specification, learned_method, learned_criteria,
                         learned_sample_frequency, learned_control_method, learned_reaction_plan,
                         sample_clause, sample_quote, is_active, promoted_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CASE WHEN ? = 1 THEN datetime('now', 'localtime') ELSE NULL END)
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CASE WHEN ? = 1 THEN datetime('now', 'localtime') ELSE NULL END)
                     """,
                     (
+                        self.user_id or 0,
                         pattern_key,
                         plugin_key,
                         category_label,
@@ -421,6 +427,11 @@ class FeedbackRuleLearner:
     ) -> List[Dict[str, Any]]:
         query = "SELECT * FROM learned_rules WHERE 1=1"
         params: List[Any] = []
+        if self.user_id is not None:
+            query += " AND (user_id = ? OR user_id = 0)"
+            params.append(self.user_id)
+        else:
+            query += " AND user_id = 0"
         if plugin_key:
             query += " AND plugin_key = ?"
             params.append(plugin_key)
@@ -450,23 +461,36 @@ class FeedbackRuleLearner:
     ) -> Optional[Dict[str, Any]]:
         """
         在后处理门禁中查找是否有匹配当前检查项的已生效自学习规则（严格匹配，禁止宽泛子串包含匹配）：
-        1. 优先精确匹配归一化 pattern_key；
+        1. 优先精确匹配当前用户专属归一化 pattern_key，未中且处于用户上下文时回退匹配全局默认规则；
         2. 其次在同一标准类别下匹配剥离【工序前缀】后的核心特性名称完全一致项。
         """
         plugin_key, _ = self.resolve_category_pair(standard_category)
-        pattern_key = self.build_pattern_key(plugin_key, characteristic_name)
+        user_pattern_key = self.build_pattern_key(plugin_key, characteristic_name, user_id=self.user_id)
         with self._connect() as conn:
+            # 1. 尝试当前用户专属匹配
             exact = conn.execute(
                 "SELECT * FROM learned_rules WHERE pattern_key = ? AND is_active = 1",
-                (pattern_key,),
+                (user_pattern_key,),
             ).fetchone()
+            if not exact and self.user_id is not None:
+                # 尝试全局默认规则匹配
+                global_pattern = self.build_pattern_key(plugin_key, characteristic_name, user_id=None)
+                exact = conn.execute(
+                    "SELECT * FROM learned_rules WHERE pattern_key = ? AND is_active = 1 AND user_id = 0",
+                    (global_pattern,),
+                ).fetchone()
+
             if exact:
                 return self._row_to_dict(exact)
 
-            candidates = conn.execute(
-                "SELECT * FROM learned_rules WHERE plugin_key = ? AND is_active = 1",
-                (plugin_key,),
-            ).fetchall()
+            cand_query = "SELECT * FROM learned_rules WHERE plugin_key = ? AND is_active = 1"
+            cand_params = [plugin_key]
+            if self.user_id is not None:
+                cand_query += " AND (user_id = ? OR user_id = 0)"
+                cand_params.append(self.user_id)
+            else:
+                cand_query += " AND user_id = 0"
+            candidates = conn.execute(cand_query, cand_params).fetchall()
 
         core_target = self.extract_core_characteristic_name(characteristic_name)
         if core_target:
@@ -560,12 +584,23 @@ class FeedbackRuleLearner:
         return self._row_to_dict(row)
 
     def delete_rule(self, rule_id: int) -> bool:
+        """删除指定的自学习规则"""
         with self._connect() as conn:
-            cur = conn.execute("DELETE FROM learned_rules WHERE id = ?", (rule_id,))
+            if self.user_id is not None:
+                cur = conn.execute(
+                    "DELETE FROM learned_rules WHERE id = ? AND (user_id = ? OR user_id = 0)",
+                    (rule_id, self.user_id),
+                )
+            else:
+                cur = conn.execute("DELETE FROM learned_rules WHERE id = ?", (rule_id,))
             conn.commit()
             return cur.rowcount > 0
 
     def reset_all_rules(self) -> None:
+        """清空自学习规则与历史计数（支持当前用户独立清空）"""
         with self._connect() as conn:
-            conn.execute("DELETE FROM learned_rules")
+            if self.user_id is not None:
+                conn.execute("DELETE FROM learned_rules WHERE user_id = ?", (self.user_id,))
+            else:
+                conn.execute("DELETE FROM learned_rules")
             conn.commit()

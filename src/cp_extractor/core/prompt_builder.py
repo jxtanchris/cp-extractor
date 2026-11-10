@@ -285,7 +285,7 @@ class PromptBuilder:
                 plugin_body,
             ])
             try:
-                learned_block = FeedbackRuleLearner().build_prompt_injection_block(pk)
+                learned_block = FeedbackRuleLearner(user_id=self.user_id).build_prompt_injection_block(pk)
                 if learned_block:
                     prompt_parts.extend(["", learned_block])
             except Exception:

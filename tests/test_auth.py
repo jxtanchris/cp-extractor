@@ -343,3 +343,175 @@ def test_user_prompt_template_isolation_and_fallback():
     assert a_reset_base["content"] == original_official_content
     assert a_reset_base["is_user_custom"] is False
 
+
+def test_storage_sandbox_and_idor_prevention(tmp_path):
+    """
+    Phase 3 专项测试：文件存储沙箱隔离与防越权 (IDOR) 保护机制
+    1. 用户 A 上传与导出文件物理隔离在 output/users/{user_a_id}/ 目录下
+    2. 用户 A 携带 Header 或 URL ?token=... 均可正常预览与下载自身文件
+    3. 用户 B 尝试访问用户 A 的文件被 403 严格拦截 (防水平越权 IDOR)
+    4. 未登录访问被 401 拦截
+    5. 管理员 (admin) 拥有跨用户审计特权，可正常读取
+    6. 路径遍历注入攻击 (Path Traversal, ../) 被 400 严格拦截
+    """
+    ts = int(time.time() * 1000)
+    user_a = f"engineer_idor_a_{ts}"
+    user_b = f"engineer_idor_b_{ts}"
+
+    token_a = client.post("/api/auth/register", json={"username": user_a, "password": "password123"}).json()["access_token"]
+    token_b = client.post("/api/auth/register", json={"username": user_b, "password": "password123"}).json()["access_token"]
+    admin_token = client.post("/api/auth/login", json={"username": "admin", "password": "admin"}).json()["access_token"]
+
+    headers_a = {"Authorization": f"Bearer {token_a}"}
+    headers_b = {"Authorization": f"Bearer {token_b}"}
+    headers_admin = {"Authorization": f"Bearer {admin_token}"}
+
+    # 1. 用户 A 上传文档
+    upload_resp = client.post(
+        "/api/upload",
+        files={"file": ("idor_spec_a.txt", b"1.1 Characteristic Tolerance 10 +/- 0.1 mm\n", "text/plain")},
+        headers=headers_a,
+    )
+    assert upload_resp.status_code == 200
+    source_filename = upload_resp.json()["source_file_url"].split("/")[-1]
+
+    # 2. 用户 A 提取并生成导出产物
+    ext_resp = client.post(
+        "/api/extract",
+        json={
+            "file_name": source_filename,
+            "content": "1.1 Characteristic Tolerance 10 +/- 0.1 mm",
+            "engine_mode": "rule",
+        },
+        headers=headers_a,
+    )
+    assert ext_resp.status_code == 200
+    excel_url = ext_resp.json()["excel_download_url"]
+    excel_filename = excel_url.split("/")[-1]
+
+    # 3. 用户 A 正常访问自身文件（Header 模式与 URL ?token= 模式）
+    res_a_view = client.get(f"/api/source/{source_filename}", headers=headers_a)
+    assert res_a_view.status_code == 200
+
+    res_a_view_query = client.get(f"/api/source/{source_filename}?token={token_a}")
+    assert res_a_view_query.status_code == 200
+
+    res_a_dl = client.get(f"/api/download/{excel_filename}", headers=headers_a)
+    assert res_a_dl.status_code == 200
+
+    # 4. 未登录访问 -> 401 Unauthorized
+    unauth_view = client.get(f"/api/source/{source_filename}")
+    assert unauth_view.status_code == 401
+
+    unauth_dl = client.get(f"/api/download/{excel_filename}")
+    assert unauth_dl.status_code == 401
+
+    # 5. 用户 B 越权访问用户 A 的文件 -> 403 Forbidden 严格拦截
+    idor_view = client.get(f"/api/source/{source_filename}", headers=headers_b)
+    assert idor_view.status_code == 403
+    assert "越权访问拦截" in idor_view.json()["detail"]
+
+    idor_dl = client.get(f"/api/download/{excel_filename}", headers=headers_b)
+    assert idor_dl.status_code == 403
+    assert "越权访问拦截" in idor_dl.json()["detail"]
+
+    idor_view_query = client.get(f"/api/source/{source_filename}?token={token_b}")
+    assert idor_view_query.status_code == 403
+
+    # 6. 管理员特权审计访问 -> 200 OK
+    admin_view = client.get(f"/api/source/{source_filename}", headers=headers_admin)
+    assert admin_view.status_code == 200
+
+    admin_dl = client.get(f"/api/download/{excel_filename}", headers=headers_admin)
+    assert admin_dl.status_code == 200
+
+    # 7. 路径遍历与非法文件名攻击检测 -> 400 Bad Request
+    from src.cp_extractor.api.app import _locate_user_file
+    from src.cp_extractor.schemas.auth import UserResponse
+    from fastapi import HTTPException
+    import pytest
+
+    mock_user = UserResponse(id=1, username="test", display_name="Test", is_admin=False, created_at="2026-01-01T00:00:00")
+    with pytest.raises(HTTPException) as exc_info:
+        _locate_user_file("../../etc/passwd", mock_user)  # 包含路径穿越字符
+    assert exc_info.value.status_code == 400
+    assert "非法" in exc_info.value.detail
+
+
+def test_feedback_rule_learning_user_isolation():
+    """
+    Phase 3 专项测试：自学习规则引擎的多租户/多用户经验隔离机制
+    1. 用户 A 手工准入特定项满 3 次，晋升为用户 A 的生效规则
+    2. 用户 A 再次提取时，系统自动放行并应用专属方法与判据
+    3. 用户 B 提取同一标准文档时，依然保持待审核状态，不受用户 A 的自学习规则影响
+    """
+    ts = int(time.time() * 1000)
+    user_a = f"engineer_learn_a_{ts}"
+    user_b = f"engineer_learn_b_{ts}"
+
+    token_a = client.post("/api/auth/register", json={"username": user_a, "password": "password123"}).json()["access_token"]
+    token_b = client.post("/api/auth/register", json={"username": user_b, "password": "password123"}).json()["access_token"]
+
+    headers_a = {"Authorization": f"Bearer {token_a}"}
+    headers_b = {"Authorization": f"Bearer {token_b}"}
+
+    # 重置两者的学习规则
+    client.post("/api/learning/reset", headers=headers_a)
+    client.post("/api/learning/reset", headers=headers_b)
+    client.put("/api/learning/settings", json={"threshold": 3}, headers=headers_a)
+
+    sample_data = client.get("/api/samples/sample_tolerance_iso2768.md").json()
+
+    try:
+        # 1. 用户 A 提取公差样本（10 条正式，1 条待确认）
+        ext_a = client.post(
+            "/api/extract",
+            json={"file_name": "sample_tolerance_iso2768.md", "content": sample_data["content"], "engine_mode": "rule"},
+            headers=headers_a,
+        ).json()["package"]
+        assert len(ext_a["pending_review_items"]) == 1
+        pending_item = ext_a["pending_review_items"][0]
+
+        revised_item = {
+            **pending_item,
+            "specification": "轮廓度 ⌓ ≤ 0.5 mm",
+            "inspection_method": "工程师A专属影像仪",
+            "acceptance_criteria": "实测轮廓度误差 ≤ 0.5 mm",
+        }
+
+        # 用户 A 连续 3 次准入
+        for i in range(3):
+            r = client.post(
+                "/api/approve-review",
+                json={"package": ext_a, "review_index": 0, "action": "approve", "updated_item": revised_item},
+                headers=headers_a,
+            ).json()["learning_event"]
+
+        assert r["just_promoted"] is True
+        assert r["rule"]["is_active"] is True
+
+        # 2. 用户 A 再次提取：自学习规则生效，待确认项自动放行为 0，正式项增加到 11
+        ext_a_again = client.post(
+            "/api/extract",
+            json={"file_name": "sample_tolerance_iso2768.md", "content": sample_data["content"], "engine_mode": "rule"},
+            headers=headers_a,
+        ).json()["package"]
+        assert len(ext_a_again["pending_review_items"]) == 0
+        assert len(ext_a_again["check_items"]) == 11
+        item_a = next(i for i in ext_a_again["check_items"] if i["characteristic_name"] == "局部非关键翻边轮廓度")
+        assert item_a["inspection_method"] == "工程师A专属影像仪"
+
+        # 3. 用户 B 提取相同的公差样本：隔离保护！用户 B 依然有 1 条待人工确认项，绝不被用户 A 的规则误放行！
+        ext_b = client.post(
+            "/api/extract",
+            json={"file_name": "sample_tolerance_iso2768.md", "content": sample_data["content"], "engine_mode": "rule"},
+            headers=headers_b,
+        ).json()["package"]
+        assert len(ext_b["pending_review_items"]) == 1
+        assert len(ext_b["check_items"]) == 10
+        assert ext_b["pending_review_items"][0]["characteristic_name"] == "局部非关键翻边轮廓度"
+    finally:
+        client.post("/api/learning/reset", headers=headers_a)
+        client.post("/api/learning/reset", headers=headers_b)
+
+

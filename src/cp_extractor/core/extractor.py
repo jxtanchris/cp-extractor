@@ -44,7 +44,7 @@ class StandardExtractorPipeline:
         else:
             self.prompt_builder = PromptBuilder(templates_dir=templates_dir, user_id=user_id)
         self.user_id = user_id
-        self.validator = QualityGateValidator()
+        self.validator = QualityGateValidator(user_id=user_id)
         self.llm_callable = llm_callable
         # 若传入的 llm_callable 是 DeepSeekClient.extract_check_items_json 绑定方法，自动挂载其 refine_items_with_feedback
         if llm_refiner is not None:
