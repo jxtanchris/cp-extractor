@@ -955,27 +955,45 @@
 </div>
 
 <!-- 修改密码模态框 -->
-<div class="modal-backdrop" id="changePasswordModal" style="display:none; z-index:9995;">
-  <div class="modal-card" style="max-width:420px; width:92vw;">
-    <div class="auth-modal-header" style="margin-bottom:14px;">
-      <h3 style="margin:0; font-size:16px; font-weight:700;">🔒 修改登录密码</h3>
-      <button class="btn-close" onclick="closeChangePasswordModal()">✖ 关闭</button>
+<div class="modal-backdrop" id="changePasswordModal" style="display:none; z-index:9995;" onclick="if(event.target===this) closeChangePasswordModal()">
+  <div class="modal" style="width:430px; max-width:92vw; border-radius:12px; box-shadow:0 20px 25px -5px rgba(0,0,0,0.25), 0 10px 10px -5px rgba(0,0,0,0.08); padding:22px; background:#ffffff;">
+    <!-- 头部 -->
+    <div style="display:flex; justify-content:space-between; align-items:center; padding-bottom:12px; border-bottom:1px solid #e2e8f0; margin-bottom:16px;">
+      <div style="display:flex; align-items:center; gap:8px;">
+        <span style="font-size:18px;">🔒</span>
+        <h3 style="margin:0; font-size:16px; font-weight:700; color:#0f172a;">修改个人登录密码</h3>
+      </div>
+      <button type="button" class="btn-sm" style="background:#f1f5f9; border:1px solid #e2e8f0; color:#64748b; cursor:pointer; border-radius:6px; padding:4px 10px;" onclick="closeChangePasswordModal()">✖ 关闭</button>
     </div>
-    <div class="auth-error-box" id="changePwdErrorBox" style="display:none;"></div>
-    <div style="display:flex; flex-direction:column; gap:12px;">
+
+    <!-- 错误提示条 -->
+    <div class="auth-error-box" id="changePwdErrorBox" style="display:none; margin-bottom:14px;"></div>
+
+    <!-- 表单内容 -->
+    <div style="display:flex; flex-direction:column; gap:14px;">
       <div class="field">
-        <label>原密码 (Current Password)</label>
-        <input type="password" id="oldPasswordInput" class="form-control" placeholder="请输入当前旧密码" onkeydown="if(event.key==='Enter') submitChangePassword()" />
+        <label style="display:block; font-size:12.5px; font-weight:600; color:#334155; margin-bottom:5px;">当前原密码 (Current Password)</label>
+        <input type="password" id="oldPasswordInput" class="form-control" placeholder="请输入您当前的登录密码" style="box-sizing:border-box; height:38px; padding:8px 12px; font-size:13.5px;" onkeydown="if(event.key==='Enter') submitChangePassword()" />
       </div>
+
       <div class="field">
-        <label>新密码 (New Password，至少 5 位)</label>
-        <input type="password" id="newPasswordInput" class="form-control" placeholder="请输入新密码 (至少5位)" onkeydown="if(event.key==='Enter') submitChangePassword()" />
+        <label style="display:block; font-size:12.5px; font-weight:600; color:#334155; margin-bottom:5px;">
+          设置新密码 (New Password)
+          <span style="font-size:11px; font-weight:normal; color:#64748b; margin-left:4px;">(至少 5 位)</span>
+        </label>
+        <input type="password" id="newPasswordInput" class="form-control" placeholder="请输入新密码（建议包含字母与数字）" style="box-sizing:border-box; height:38px; padding:8px 12px; font-size:13.5px;" onkeydown="if(event.key==='Enter') submitChangePassword()" />
       </div>
+
       <div class="field">
-        <label>确认新密码 (Confirm Password)</label>
-        <input type="password" id="confirmPasswordInput" class="form-control" placeholder="请再次输入新密码" onkeydown="if(event.key==='Enter') submitChangePassword()" />
+        <label style="display:block; font-size:12.5px; font-weight:600; color:#334155; margin-bottom:5px;">确认新密码 (Confirm Password)</label>
+        <input type="password" id="confirmPasswordInput" class="form-control" placeholder="请再次输入新密码" style="box-sizing:border-box; height:38px; padding:8px 12px; font-size:13.5px;" onkeydown="if(event.key==='Enter') submitChangePassword()" />
       </div>
-      <button type="button" class="btn-primary" id="changePwdSubmitBtn" onclick="submitChangePassword()" style="margin-top:6px;">确认修改密码</button>
+
+      <!-- 底部操作按钮栏 -->
+      <div style="display:flex; justify-content:flex-end; gap:10px; margin-top:8px; padding-top:14px; border-top:1px solid #f1f5f9;">
+        <button type="button" class="btn-sm" style="background:#f8fafc; border:1px solid #cbd5e1; color:#475569; padding:8px 16px; border-radius:6px; cursor:pointer; font-size:13px; font-weight:500;" onclick="closeChangePasswordModal()">取消</button>
+        <button type="button" class="btn-primary" id="changePwdSubmitBtn" onclick="submitChangePassword()" style="padding:8px 20px; font-size:13px; font-weight:600; border-radius:6px; cursor:pointer; box-shadow:0 2px 4px rgba(37,99,235,0.25);">确认修改密码</button>
+      </div>
     </div>
   </div>
 </div>
